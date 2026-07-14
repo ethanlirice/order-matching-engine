@@ -279,15 +279,168 @@ TEST(OrderBookTest, ZeroQuantityOrderIsANoOp) {
   EXPECT_FALSE(book.contains(1));
 }
 
-TEST(OrderBookTest, OutOfScopeOrderTypesAreRejected) {
-  for (OrderType type : {OrderType::IOC, OrderType::FOK, OrderType::PostOnly}) {
-    OrderBook book;
-    AddOrderResult result = book.add_order(MakeOrder(1, Side::Buy, type, 100, 10));
-    EXPECT_EQ(result.cancelled_quantity, 10u);
-    EXPECT_EQ(result.filled_quantity, 0u);
-    EXPECT_EQ(result.resting_quantity, 0u);
-    EXPECT_FALSE(book.contains(1));
-  }
+// -- IOC (Immediate-Or-Cancel): matches like a Limit at its price, but any
+// unfilled remainder is dropped, never rests. ------------------------------
+
+TEST(OrderBookTest, IocPartialFillDropsRemainderWithoutResting) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 4));
+  AddOrderResult result = book.add_order(MakeOrder(2, Side::Buy, OrderType::IOC, 100, 10));
+
+  ASSERT_EQ(result.trades.size(), 1u);
+  EXPECT_EQ(result.filled_quantity, 4u);
+  EXPECT_EQ(result.cancelled_quantity, 6u);
+  EXPECT_EQ(result.resting_quantity, 0u);
+  EXPECT_FALSE(book.contains(2));
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, IocFullFillLeavesNoRemainderToDrop) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 10));
+  AddOrderResult result = book.add_order(MakeOrder(2, Side::Buy, OrderType::IOC, 100, 10));
+
+  EXPECT_EQ(result.filled_quantity, 10u);
+  EXPECT_EQ(result.cancelled_quantity, 0u);
+  EXPECT_EQ(result.resting_quantity, 0u);
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, IocAgainstNonCrossingBookIsFullyCancelled) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 105, 10));
+  AddOrderResult result = book.add_order(MakeOrder(2, Side::Buy, OrderType::IOC, 100, 10));
+
+  EXPECT_TRUE(result.trades.empty());
+  EXPECT_EQ(result.filled_quantity, 0u);
+  EXPECT_EQ(result.cancelled_quantity, 10u);
+  EXPECT_FALSE(book.contains(2));
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+// -- FOK (Fill-Or-Kill): fills in full immediately, or the entire order is
+// rejected -- zero trades, book completely unchanged. ----------------------
+
+TEST(OrderBookTest, FokFillsWhenSingleLevelHasEnoughLiquidity) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 10));
+  AddOrderResult result = book.add_order(MakeOrder(2, Side::Buy, OrderType::FOK, 100, 10));
+
+  ASSERT_EQ(result.trades.size(), 1u);
+  EXPECT_EQ(result.filled_quantity, 10u);
+  EXPECT_EQ(result.cancelled_quantity, 0u);
+  EXPECT_FALSE(book.contains(1));
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, FokFillsWhenLiquiditySpansMultipleLevels) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 5));
+  book.add_order(MakeOrder(2, Side::Sell, OrderType::Limit, 101, 5));
+  AddOrderResult result = book.add_order(MakeOrder(3, Side::Buy, OrderType::FOK, 101, 10));
+
+  ASSERT_EQ(result.trades.size(), 2u);
+  EXPECT_EQ(result.filled_quantity, 10u);
+  EXPECT_EQ(result.cancelled_quantity, 0u);
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, FokRejectedWhenLiquidityInsufficientBookUntouched) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 4));
+  AddOrderResult result = book.add_order(MakeOrder(2, Side::Buy, OrderType::FOK, 100, 10));
+
+  EXPECT_TRUE(result.trades.empty());
+  EXPECT_EQ(result.filled_quantity, 0u);
+  EXPECT_EQ(result.cancelled_quantity, 10u);
+  EXPECT_FALSE(book.contains(2));
+
+  // Book completely unchanged -- the maker is still resting with its full
+  // original quantity, not partially consumed.
+  EXPECT_TRUE(book.contains(1));
+  const Order* maker = book.debug_peek(1);
+  ASSERT_NE(maker, nullptr);
+  EXPECT_EQ(maker->quantity, 4u);
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, FokExactBoundaryLiquidityFills) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 10));
+  AddOrderResult result = book.add_order(MakeOrder(2, Side::Buy, OrderType::FOK, 100, 10));
+
+  EXPECT_EQ(result.filled_quantity, 10u);
+  EXPECT_EQ(result.cancelled_quantity, 0u);
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, FokAgainstEmptyBookIsRejected) {
+  OrderBook book;
+  AddOrderResult result = book.add_order(MakeOrder(1, Side::Buy, OrderType::FOK, 100, 10));
+
+  EXPECT_TRUE(result.trades.empty());
+  EXPECT_EQ(result.cancelled_quantity, 10u);
+  EXPECT_FALSE(book.contains(1));
+}
+
+// -- Post-Only: rejected outright if it would cross; otherwise rests like a
+// Limit order. --------------------------------------------------------------
+
+TEST(OrderBookTest, PostOnlyRestsWhenItDoesNotCross) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 105, 10));
+  AddOrderResult result = book.add_order(MakeOrder(2, Side::Buy, OrderType::PostOnly, 100, 10));
+
+  EXPECT_TRUE(result.trades.empty());
+  EXPECT_EQ(result.resting_quantity, 10u);
+  EXPECT_TRUE(book.contains(2));
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, PostOnlyRejectedOutrightWhenItWouldCross) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 10));
+  AddOrderResult result = book.add_order(MakeOrder(2, Side::Buy, OrderType::PostOnly, 101, 10));
+
+  EXPECT_TRUE(result.trades.empty());
+  EXPECT_EQ(result.cancelled_quantity, 10u);
+  EXPECT_EQ(result.resting_quantity, 0u);
+  EXPECT_FALSE(book.contains(2));
+  // The resting maker must be completely untouched.
+  const Order* maker = book.debug_peek(1);
+  ASSERT_NE(maker, nullptr);
+  EXPECT_EQ(maker->quantity, 10u);
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, PostOnlyRejectedAtExactTouchPrice) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 10));
+  AddOrderResult result = book.add_order(MakeOrder(2, Side::Buy, OrderType::PostOnly, 100, 10));
+
+  EXPECT_TRUE(result.trades.empty());
+  EXPECT_EQ(result.cancelled_quantity, 10u);
+  EXPECT_FALSE(book.contains(2));
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, ModifyPostOnlyToACrossingPriceRejectsTheModify) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 10));
+  book.add_order(MakeOrder(2, Side::Buy, OrderType::PostOnly, 95, 10));
+
+  std::optional<AddOrderResult> result = book.modify_order(2, 100, 10);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_TRUE(result->trades.empty());
+  EXPECT_EQ(result->cancelled_quantity, 10u);
+  EXPECT_EQ(result->resting_quantity, 0u);
+  // The original resting order is gone (cancelled as part of the modify);
+  // the replacement was rejected rather than resting or matching.
+  EXPECT_FALSE(book.contains(2));
+  const Order* maker = book.debug_peek(1);
+  ASSERT_NE(maker, nullptr);
+  EXPECT_EQ(maker->quantity, 10u);
+  EXPECT_TRUE(CheckInvariants(book));
 }
 
 // -- Invariants (PROJECT_SPEC.md §5.5) --------------------------------------

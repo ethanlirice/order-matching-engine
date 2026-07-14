@@ -4,10 +4,10 @@ A low-latency limit-order-book (LOB) matching engine in C++, wrapped in an
 event-driven simulator, used as a lab for inventory-aware market-making
 strategies (Avellaneda-Stoikov, order-flow-imbalance).
 
-**Status: M1 — correct engine.** Limit + Market orders, price-time-priority
-matching, cancel, modify, and trade events are implemented and covered by
-unit, invariant, determinism, and fuzz tests. IOC/FOK/PostOnly land in M2;
-no performance work has started yet (M3).
+**Status: M2 — more order types.** All five order types (Limit, Market,
+IOC, FOK, Post-Only), price-time-priority matching, cancel, modify, and
+trade events are implemented and covered by unit, invariant, determinism,
+and fuzz tests. No performance work has started yet (M3).
 
 ## Build
 

@@ -14,8 +14,7 @@
 // libFuzzer registers a finding -- GTest-style EXPECT would not stop the
 // fuzzer, so violations here call std::abort() directly.
 //
-// {Limit, Market} only -- IOC/FOK/PostOnly rejection is covered by an
-// explicit unit test in tests/order_book_test.cpp, not by this fuzzer.
+// Exercises all 5 OrderType values (Limit, Market, IOC, FOK, PostOnly).
 
 namespace {
 
@@ -71,7 +70,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 
     int op_choice = kind_byte % 10;
     if (op_choice <= 6 || known_ids.empty()) {
-      OrderType type = (kind_byte % 5 == 0) ? OrderType::Market : OrderType::Limit;
+      static constexpr OrderType kTypes[] = {OrderType::Limit, OrderType::Market, OrderType::IOC,
+                                             OrderType::FOK, OrderType::PostOnly};
+      OrderType type = kTypes[kind_byte % 5];
       OrderId id = next_id++;
       Order order = lob::testing::MakeOrder(id, side, type, price, qty);
 

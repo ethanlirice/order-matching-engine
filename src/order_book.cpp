@@ -56,14 +56,30 @@ void OrderBook::finalize_removal(LevelMap& side_map, typename LevelMap::iterator
   order_index_.erase(order->id);
 }
 
+template <typename OppositeMap>
+bool OrderBook::CanFullyFill(const OppositeMap& opposite, Side side, Price price,
+                             Quantity needed) const {
+  Quantity available = 0;
+  for (const auto& [level_price, level] : opposite) {
+    if (!Crosses(side, price, level_price)) {
+      break;
+    }
+    available += level.total_quantity();
+    if (available >= needed) {
+      return true;
+    }
+  }
+  return available >= needed;
+}
+
 AddOrderResult OrderBook::add_order(Order incoming) {
   AddOrderResult result;
 
-  // Both rejections below are defined, testable API behavior (not assumed-
-  // impossible programmer error), so they're always the graceful path in
-  // every build config -- deliberately no assert() here: a debug-only
-  // tripwire would abort before the unit tests exercising these exact
-  // rejections could observe the result.
+  // Duplicate-id rejection below is defined, testable API behavior (not
+  // assumed-impossible programmer error), so it's always the graceful path
+  // in every build config -- deliberately no assert() here: a debug-only
+  // tripwire would abort before the unit test exercising this exact
+  // rejection could observe the result.
   if (order_index_.contains(incoming.id)) {
     result.cancelled_quantity = incoming.quantity;
     return result;
@@ -71,9 +87,30 @@ AddOrderResult OrderBook::add_order(Order incoming) {
   if (incoming.quantity == 0) {
     return result;
   }
-  if (incoming.type != OrderType::Limit && incoming.type != OrderType::Market) {
-    result.cancelled_quantity = incoming.quantity;
-    return result;
+
+  // Post-Only: reject outright if it would cross at submission time --
+  // never takes liquidity, not even partially.
+  if (incoming.type == OrderType::PostOnly) {
+    Price opposite_best = 0;
+    bool has_opposite =
+        incoming.side == Side::Buy ? best_ask(opposite_best) : best_bid(opposite_best);
+    if (has_opposite && Crosses(incoming.side, incoming.price, opposite_best)) {
+      result.cancelled_quantity = incoming.quantity;
+      return result;
+    }
+  }
+
+  // FOK: all-or-nothing. Reject the entire order, untouched, unless the
+  // opposite side already has enough crossing liquidity to fill it in
+  // full right now.
+  if (incoming.type == OrderType::FOK) {
+    bool fillable = incoming.side == Side::Buy
+                        ? CanFullyFill(asks_, incoming.side, incoming.price, incoming.quantity)
+                        : CanFullyFill(bids_, incoming.side, incoming.price, incoming.quantity);
+    if (!fillable) {
+      result.cancelled_quantity = incoming.quantity;
+      return result;
+    }
   }
 
   if (incoming.side == Side::Buy) {
@@ -83,21 +120,30 @@ AddOrderResult OrderBook::add_order(Order incoming) {
   }
 
   if (incoming.quantity > 0) {
-    if (incoming.type == OrderType::Market) {
-      result.cancelled_quantity = incoming.quantity;
-    } else {
-      auto node = std::make_unique<Order>(incoming);
-      Order* raw = node.get();
-      order_index_.emplace(incoming.id, std::move(node));
+    switch (incoming.type) {
+      case OrderType::Market:
+      case OrderType::IOC:
+      case OrderType::FOK:
+        // Never rest: Market/IOC drop any unfilled remainder, and FOK's
+        // remainder is always zero here given the pre-check above.
+        result.cancelled_quantity = incoming.quantity;
+        break;
+      case OrderType::Limit:
+      case OrderType::PostOnly: {
+        auto node = std::make_unique<Order>(incoming);
+        Order* raw = node.get();
+        order_index_.emplace(incoming.id, std::move(node));
 
-      if (incoming.side == Side::Buy) {
-        auto [level_it, inserted] = bids_.try_emplace(incoming.price, incoming.price);
-        level_it->second.push_back(raw);
-      } else {
-        auto [level_it, inserted] = asks_.try_emplace(incoming.price, incoming.price);
-        level_it->second.push_back(raw);
+        if (incoming.side == Side::Buy) {
+          auto [level_it, inserted] = bids_.try_emplace(incoming.price, incoming.price);
+          level_it->second.push_back(raw);
+        } else {
+          auto [level_it, inserted] = asks_.try_emplace(incoming.price, incoming.price);
+          level_it->second.push_back(raw);
+        }
+        result.resting_quantity = incoming.quantity;
+        break;
       }
-      result.resting_quantity = incoming.quantity;
     }
   }
 

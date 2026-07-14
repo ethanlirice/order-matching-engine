@@ -47,7 +47,9 @@ std::vector<GeneratedOp> GenerateOps(std::uint64_t seed, std::size_t count) {
       GeneratedOp op;
       op.kind = OpKind::Add;
       Side side = side_dist(rng) == 0 ? Side::Buy : Side::Sell;
-      OrderType type = (type_dist(rng) == 0) ? OrderType::Market : OrderType::Limit;
+      static constexpr OrderType kTypes[] = {OrderType::Limit, OrderType::Market, OrderType::IOC,
+                                             OrderType::FOK, OrderType::PostOnly};
+      OrderType type = kTypes[static_cast<std::size_t>(type_dist(rng))];
       op.order = MakeOrder(next_id, side, type, price_dist(rng), qty_dist(rng));
       live_ids.push_back(next_id);
       ++next_id;

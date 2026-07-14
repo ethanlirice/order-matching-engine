@@ -62,6 +62,14 @@ class OrderBook {
   void match_against(OppositeMap& opposite, Order& incoming, std::vector<TradeEvent>& trades,
                      Quantity& filled_quantity);
 
+  // Read-only: true iff the resting liquidity crossing incoming's price on
+  // the opposite side sums to at least `needed`. Used by FOK's all-or-
+  // nothing pre-check; walks the same map, in the same order, using the
+  // same crossing rule as match_against, so it can never disagree with the
+  // real match that follows it.
+  template <typename OppositeMap>
+  bool CanFullyFill(const OppositeMap& opposite, Side side, Price price, Quantity needed) const;
+
   template <typename LevelMap>
   void finalize_removal(LevelMap& side_map, typename LevelMap::iterator level_it, Order* order);
 
