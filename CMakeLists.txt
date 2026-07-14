@@ -13,6 +13,14 @@ option(LOB_ENABLE_SANITIZERS "Build with AddressSanitizer + UndefinedBehaviorSan
 option(LOB_BUILD_TESTS "Build the test suite" ON)
 option(LOB_BUILD_BENCHMARKS "Build the Google Benchmark suite" ON)
 
+# ThreadSanitizer can't coexist with ASan/UBSan in the same binary, so the
+# SPSC ring buffer's concurrency test gets its own separate executable,
+# built only when this is explicitly requested -- configure with
+# -DLOB_ENABLE_SANITIZERS=OFF (the default) alongside this, not both ON.
+option(LOB_BUILD_TSAN_TESTS "Build a ThreadSanitizer-only binary for the SPSC ring buffer test" OFF)
+
+find_package(Threads REQUIRED)
+
 # libFuzzer (-fsanitize=fuzzer) requires real LLVM clang's compiler-rt
 # runtime; AppleClang (macOS system clang) doesn't ship it. Default ON only
 # when the compiler actually reports as "Clang" (true for apt's clang on

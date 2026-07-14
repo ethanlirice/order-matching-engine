@@ -40,6 +40,42 @@ jobs:
         # Real benchmark numbers are collected locally in an unsanitized
         # build; see README's Benchmarking section.
 
+  tsan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build clang
+
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: >
+          cmake -S . -B build-tsan -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DLOB_BUILD_TSAN_TESTS=ON
+          -DLOB_BUILD_BENCHMARKS=OFF
+          -DLOB_BUILD_FUZZERS=OFF
+        # LOB_ENABLE_SANITIZERS stays OFF (default) here: ThreadSanitizer
+        # can't coexist with ASan/UBSan in the same binary, and this job's
+        # only target (lob_tsan_tests) doesn't even link the ASan-tainted
+        # `lob` library -- see tests/CMakeLists.txt.
+
+      - name: Build
+        run: cmake --build build-tsan --target lob_tsan_tests -j
+
+      - name: Test under ThreadSanitizer
+        run: ctest --test-dir build-tsan --output-on-failure -R SpscRingBufferTest
+        # -R filters to just this job's target: lob_tests (a different
+        # executable, unrelated to this job) isn't built here since only
+        # --target lob_tsan_tests was, and ctest registers an expected
+        # "NOT_BUILT" failure placeholder for any discovered-but-unbuilt
+        # test binary otherwise.
+
   lint:
     runs-on: ubuntu-latest
     steps:
