@@ -1,4 +1,4 @@
-# order-matching-engine
+# Order Matching Engine
 
 A low-latency limit-order-book (LOB) matching engine in C++, wrapped in an
 event-driven simulator, used as a lab for inventory-aware market-making
