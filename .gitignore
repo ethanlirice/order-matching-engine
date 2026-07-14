@@ -1,0 +1,19 @@
+# --- keep planning docs local only, never push ---
+PROJECT_SPEC.md
+CLAUDE.md
+SETUP_GUIDE.md
+
+# --- build & artifacts ---
+build/
+*.o
+*.a
+*.so
+*.dylib
+__pycache__/
+.venv/
+.DS_Store
+
+# --- large / generated data ---
+data/*.csv
+data/*.bin
+data/*.parquet
