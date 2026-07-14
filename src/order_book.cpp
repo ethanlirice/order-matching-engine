@@ -1,29 +1,237 @@
 #include "lob/order_book.hpp"
 
+#include <algorithm>
+#include <utility>
+
 namespace lob {
 
-OrderBook::OrderBook() = default;
+namespace {
 
-void OrderBook::add_order(const Order& /*order*/) {
-  // Matching + resting logic: implemented in M1.
+bool Crosses(Side incoming_side, Price incoming_price, Price opposite_price) {
+  return incoming_side == Side::Buy ? incoming_price >= opposite_price
+                                    : incoming_price <= opposite_price;
 }
 
-void OrderBook::cancel_order(OrderId /*id*/) {
-  // O(1) cancel via order_index_: implemented in M1.
+}  // namespace
+
+template <typename OppositeMap>
+void OrderBook::match_against(OppositeMap& opposite, Order& incoming,
+                              std::vector<TradeEvent>& trades, Quantity& filled_quantity) {
+  while (incoming.quantity > 0 && !opposite.empty()) {
+    auto level_it = opposite.begin();
+    Level& level = level_it->second;
+    if (incoming.type != OrderType::Market &&
+        !Crosses(incoming.side, incoming.price, level.price())) {
+      break;
+    }
+
+    Order* maker = level.front();
+    Quantity fill = std::min(incoming.quantity, maker->quantity);
+
+    trades.push_back(TradeEvent{
+        maker->price,
+        fill,
+        incoming.side,
+        maker->id,
+        incoming.id,
+        incoming.timestamp,
+    });
+    filled_quantity += fill;
+    incoming.quantity -= fill;
+    maker->quantity -= fill;
+
+    if (maker->quantity == 0) {
+      level.pop_front();
+      finalize_removal(opposite, level_it, maker);
+    }
+  }
 }
 
-void OrderBook::modify_order(OrderId /*id*/, Price /*new_price*/, Quantity /*new_quantity*/) {
-  // cancel + re-insert-at-tail: implemented in M1.
+template <typename LevelMap>
+void OrderBook::finalize_removal(LevelMap& side_map, typename LevelMap::iterator level_it,
+                                 Order* order) {
+  if (level_it->second.empty()) {
+    side_map.erase(level_it);
+  }
+  order_index_.erase(order->id);
 }
 
-bool OrderBook::best_bid(Price& /*out_price*/) const {
-  // implemented in M1.
-  return false;
+AddOrderResult OrderBook::add_order(Order incoming) {
+  AddOrderResult result;
+
+  // Both rejections below are defined, testable API behavior (not assumed-
+  // impossible programmer error), so they're always the graceful path in
+  // every build config -- deliberately no assert() here: a debug-only
+  // tripwire would abort before the unit tests exercising these exact
+  // rejections could observe the result.
+  if (order_index_.contains(incoming.id)) {
+    result.cancelled_quantity = incoming.quantity;
+    return result;
+  }
+  if (incoming.quantity == 0) {
+    return result;
+  }
+  if (incoming.type != OrderType::Limit && incoming.type != OrderType::Market) {
+    result.cancelled_quantity = incoming.quantity;
+    return result;
+  }
+
+  if (incoming.side == Side::Buy) {
+    match_against(asks_, incoming, result.trades, result.filled_quantity);
+  } else {
+    match_against(bids_, incoming, result.trades, result.filled_quantity);
+  }
+
+  if (incoming.quantity > 0) {
+    if (incoming.type == OrderType::Market) {
+      result.cancelled_quantity = incoming.quantity;
+    } else {
+      auto node = std::make_unique<Order>(incoming);
+      Order* raw = node.get();
+      order_index_.emplace(incoming.id, std::move(node));
+
+      if (incoming.side == Side::Buy) {
+        auto [level_it, inserted] = bids_.try_emplace(incoming.price, incoming.price);
+        level_it->second.push_back(raw);
+      } else {
+        auto [level_it, inserted] = asks_.try_emplace(incoming.price, incoming.price);
+        level_it->second.push_back(raw);
+      }
+      result.resting_quantity = incoming.quantity;
+    }
+  }
+
+  return result;
 }
 
-bool OrderBook::best_ask(Price& /*out_price*/) const {
-  // implemented in M1.
-  return false;
+std::optional<Quantity> OrderBook::cancel_order(OrderId id) {
+  auto it = order_index_.find(id);
+  if (it == order_index_.end()) {
+    return std::nullopt;
+  }
+
+  Order* order = it->second.get();
+  Quantity remaining = order->quantity;
+
+  if (order->side == Side::Buy) {
+    auto level_it = bids_.find(order->price);
+    level_it->second.remove(order);
+    finalize_removal(bids_, level_it, order);
+  } else {
+    auto level_it = asks_.find(order->price);
+    level_it->second.remove(order);
+    finalize_removal(asks_, level_it, order);
+  }
+
+  return remaining;
+}
+
+std::optional<AddOrderResult> OrderBook::modify_order(OrderId id, Price new_price,
+                                                      Quantity new_quantity) {
+  auto it = order_index_.find(id);
+  if (it == order_index_.end()) {
+    return std::nullopt;
+  }
+
+  Order* existing = it->second.get();
+  Side side = existing->side;
+  OrderType type = existing->type;
+  Timestamp timestamp = existing->timestamp;
+  Quantity old_quantity = existing->quantity;
+
+  if (side == Side::Buy) {
+    auto level_it = bids_.find(existing->price);
+    level_it->second.remove(existing);
+    finalize_removal(bids_, level_it, existing);
+  } else {
+    auto level_it = asks_.find(existing->price);
+    level_it->second.remove(existing);
+    finalize_removal(asks_, level_it, existing);
+  }
+
+  AddOrderResult result;
+  if (new_quantity == 0) {
+    result.cancelled_quantity = old_quantity;
+    return result;
+  }
+
+  Order fresh;
+  fresh.id = id;
+  fresh.side = side;
+  fresh.type = type;
+  fresh.price = new_price;
+  fresh.quantity = new_quantity;
+  fresh.timestamp = timestamp;
+  return add_order(fresh);
+}
+
+bool OrderBook::best_bid(Price& out_price) const {
+  if (bids_.empty()) {
+    return false;
+  }
+  out_price = bids_.begin()->first;
+  return true;
+}
+
+bool OrderBook::best_ask(Price& out_price) const {
+  if (asks_.empty()) {
+    return false;
+  }
+  out_price = asks_.begin()->first;
+  return true;
+}
+
+bool OrderBook::contains(OrderId id) const {
+  return order_index_.contains(id);
+}
+
+std::size_t OrderBook::order_count() const {
+  return order_index_.size();
+}
+
+const Order* OrderBook::debug_peek(OrderId id) const {
+  auto it = order_index_.find(id);
+  return it == order_index_.end() ? nullptr : it->second.get();
+}
+
+std::vector<OrderId> OrderBook::resting_order_ids(Side side, Price price) const {
+  std::vector<OrderId> ids;
+  if (side == Side::Buy) {
+    auto it = bids_.find(price);
+    if (it == bids_.end()) {
+      return ids;
+    }
+    for (Order* order = it->second.front(); order != nullptr; order = order->next) {
+      ids.push_back(order->id);
+    }
+  } else {
+    auto it = asks_.find(price);
+    if (it == asks_.end()) {
+      return ids;
+    }
+    for (Order* order = it->second.front(); order != nullptr; order = order->next) {
+      ids.push_back(order->id);
+    }
+  }
+  return ids;
+}
+
+std::vector<Price> OrderBook::bid_prices() const {
+  std::vector<Price> prices;
+  prices.reserve(bids_.size());
+  for (const auto& [price, level] : bids_) {
+    prices.push_back(price);
+  }
+  return prices;
+}
+
+std::vector<Price> OrderBook::ask_prices() const {
+  std::vector<Price> prices;
+  prices.reserve(asks_.size());
+  for (const auto& [price, level] : asks_) {
+    prices.push_back(price);
+  }
+  return prices;
 }
 
 }  // namespace lob

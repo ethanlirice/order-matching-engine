@@ -14,7 +14,15 @@ class Level {
 
   Price price() const;
   bool empty() const;
+
+  // Walks the list to sum resting quantity. Not O(1) -- deliberate M1
+  // simplification (correctness before speed); revisit only if M3
+  // profiling shows it matters.
   Quantity total_quantity() const;
+
+  // Peeks the order at the head of the queue without unlinking it (used by
+  // matching to inspect/partially-fill the maker in place).
+  Order* front() const;
 
   // Appends to the tail of the FIFO queue (time priority = arrival order).
   void push_back(Order* order);
@@ -29,8 +37,7 @@ class Level {
  private:
   Price price_;
   Order* head_ = nullptr;
-  [[maybe_unused]] Order* tail_ = nullptr;
-  Quantity total_quantity_ = 0;
+  Order* tail_ = nullptr;
 };
 
 }  // namespace lob
