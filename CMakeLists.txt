@@ -12,6 +12,17 @@ endif()
 option(LOB_ENABLE_SANITIZERS "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
 option(LOB_BUILD_TESTS "Build the test suite" ON)
 
+# libFuzzer (-fsanitize=fuzzer) requires real LLVM clang's compiler-rt
+# runtime; AppleClang (macOS system clang) doesn't ship it. Default ON only
+# when the compiler actually reports as "Clang" (true for apt's clang on
+# Ubuntu CI, and for a brew-installed llvm pointed at explicitly via
+# -DCMAKE_CXX_COMPILER) -- OFF by default for AppleClang/GCC.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+  option(LOB_BUILD_FUZZERS "Build the libFuzzer harnesses" ON)
+else()
+  option(LOB_BUILD_FUZZERS "Build the libFuzzer harnesses" OFF)
+endif()
+
 add_library(lob_warnings INTERFACE)
 target_compile_options(lob_warnings INTERFACE -Wall -Wextra -Werror)
 
