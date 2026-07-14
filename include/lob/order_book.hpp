@@ -10,6 +10,7 @@
 
 #include "lob/level.hpp"
 #include "lob/order.hpp"
+#include "lob/order_pool.hpp"
 
 namespace lob {
 
@@ -29,7 +30,11 @@ struct AddOrderResult {
 // IOC/FOK/PostOnly are explicitly rejected until M2.
 class OrderBook {
  public:
-  OrderBook() = default;
+  // `pool_capacity` sizes the initial Order-object memory pool (M3 §6);
+  // the pool grows automatically (an infrequent event, not on the hot
+  // path) if a run exceeds it, so this is a performance tuning knob, not a
+  // correctness-affecting hard cap.
+  explicit OrderBook(std::size_t pool_capacity = 65536) : pool_(pool_capacity) {}
 
   // Aggressive (crossing) orders walk the opposing book in price-time
   // priority; any remainder rests (Limit) or is dropped (Market). Rejects
@@ -56,6 +61,7 @@ class OrderBook {
   std::vector<Price> bid_prices() const;
   std::vector<Price> ask_prices() const;
   std::size_t order_count() const;
+  std::size_t pool_chunk_count() const;
 
  private:
   template <typename OppositeMap>
@@ -73,11 +79,18 @@ class OrderBook {
   template <typename LevelMap>
   void finalize_removal(LevelMap& side_map, typename LevelMap::iterator level_it, Order* order);
 
-  // Sole owner of every resting Order's memory. Level and matching code
-  // hold non-owning raw Order* into it. Safe under rehashing: a rehash only
-  // moves the bucket array of unique_ptrs, never the heap-allocated Order
-  // each one points to, so raw pointers held elsewhere stay valid.
-  std::unordered_map<OrderId, std::unique_ptr<Order>> order_index_;
+  // Order memory is owned by pool_ (M3 §6); order_index_ holds only
+  // non-owning raw Order*. Safe under rehashing: a rehash only moves the
+  // unordered_map's own bucket/node bookkeeping, never a pool-owned Order,
+  // so raw pointers held elsewhere (here and in Level) stay valid.
+  //
+  // Note on scope: this pools Order *objects* only. order_index_ itself is
+  // a standard node-based unordered_map, which still heap-allocates a node
+  // per emplace() regardless of reserve() -- a smaller, separately
+  // documented residual cost this milestone doesn't eliminate (see
+  // README's Benchmarking section).
+  OrderPool pool_;
+  std::unordered_map<OrderId, Order*> order_index_;
   std::map<Price, Level, std::greater<>> bids_;
   std::map<Price, Level> asks_;
 };

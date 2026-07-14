@@ -2,6 +2,7 @@ add_executable(lob_tests
   order_book_test.cpp
   matching_engine_test.cpp
   determinism_test.cpp
+  order_pool_test.cpp
 )
 
 target_include_directories(lob_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

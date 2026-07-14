@@ -1,6 +1,7 @@
 add_library(lob STATIC
   level.cpp
   order_book.cpp
+  order_pool.cpp
   matching_engine.cpp
 )
 

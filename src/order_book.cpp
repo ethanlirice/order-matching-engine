@@ -54,6 +54,7 @@ void OrderBook::finalize_removal(LevelMap& side_map, typename LevelMap::iterator
     side_map.erase(level_it);
   }
   order_index_.erase(order->id);
+  pool_.Release(order);
 }
 
 template <typename OppositeMap>
@@ -130,9 +131,9 @@ AddOrderResult OrderBook::add_order(Order incoming) {
         break;
       case OrderType::Limit:
       case OrderType::PostOnly: {
-        auto node = std::make_unique<Order>(incoming);
-        Order* raw = node.get();
-        order_index_.emplace(incoming.id, std::move(node));
+        Order* raw = pool_.Acquire();
+        *raw = incoming;
+        order_index_.emplace(incoming.id, raw);
 
         if (incoming.side == Side::Buy) {
           auto [level_it, inserted] = bids_.try_emplace(incoming.price, incoming.price);
@@ -156,7 +157,7 @@ std::optional<Quantity> OrderBook::cancel_order(OrderId id) {
     return std::nullopt;
   }
 
-  Order* order = it->second.get();
+  Order* order = it->second;
   Quantity remaining = order->quantity;
 
   if (order->side == Side::Buy) {
@@ -179,7 +180,7 @@ std::optional<AddOrderResult> OrderBook::modify_order(OrderId id, Price new_pric
     return std::nullopt;
   }
 
-  Order* existing = it->second.get();
+  Order* existing = it->second;
   Side side = existing->side;
   OrderType type = existing->type;
   Timestamp timestamp = existing->timestamp;
@@ -235,9 +236,13 @@ std::size_t OrderBook::order_count() const {
   return order_index_.size();
 }
 
+std::size_t OrderBook::pool_chunk_count() const {
+  return pool_.chunk_count();
+}
+
 const Order* OrderBook::debug_peek(OrderId id) const {
   auto it = order_index_.find(id);
-  return it == order_index_.end() ? nullptr : it->second.get();
+  return it == order_index_.end() ? nullptr : it->second;
 }
 
 std::vector<OrderId> OrderBook::resting_order_ids(Side side, Price price) const {

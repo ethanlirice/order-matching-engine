@@ -516,5 +516,34 @@ TEST(OrderBookInvariantTest, StructuralConsistencyBetweenIndexAndLevels) {
   EXPECT_TRUE(CheckInvariants(book));
 }
 
+// -- Memory pool (M3 §6): zero Order-object allocation after warm-up -------
+
+TEST(OrderBookMemoryPoolTest, NoNewChunksAfterWarmingUpToCapacity) {
+  constexpr std::size_t kCapacity = 8;
+  OrderBook book(kCapacity);
+  EXPECT_EQ(book.pool_chunk_count(), 1u);
+
+  // Warm up: exceed the initial capacity once, forcing exactly one growth.
+  for (OrderId id = 1; id <= kCapacity + 2; ++id) {
+    book.add_order(MakeOrder(id, Side::Buy, OrderType::Limit, 100, 10));
+  }
+  EXPECT_EQ(book.pool_chunk_count(), 2u);
+
+  // Drain back down so the working set fits within what's now allocated.
+  for (OrderId id = 1; id <= kCapacity + 2; ++id) {
+    book.cancel_order(id);
+  }
+
+  // Steady state: repeatedly add/cancel within the already-grown capacity.
+  // If this allocates, pool_chunk_count() would climb further.
+  for (int cycle = 0; cycle < 100; ++cycle) {
+    OrderId id = 1000 + static_cast<OrderId>(cycle);
+    book.add_order(MakeOrder(id, Side::Buy, OrderType::Limit, 100, 10));
+    book.cancel_order(id);
+  }
+  EXPECT_EQ(book.pool_chunk_count(), 2u)
+      << "steady-state add/cancel after warm-up must not grow the pool further";
+}
+
 }  // namespace
 }  // namespace lob
