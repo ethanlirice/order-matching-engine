@@ -11,6 +11,7 @@ endif()
 
 option(LOB_ENABLE_SANITIZERS "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
 option(LOB_BUILD_TESTS "Build the test suite" ON)
+option(LOB_BUILD_BENCHMARKS "Build the Google Benchmark suite" ON)
 
 # libFuzzer (-fsanitize=fuzzer) requires real LLVM clang's compiler-rt
 # runtime; AppleClang (macOS system clang) doesn't ship it. Default ON only
@@ -47,4 +48,19 @@ if(LOB_BUILD_TESTS)
 
   enable_testing()
   add_subdirectory(tests)
+endif()
+
+if(LOB_BUILD_BENCHMARKS)
+  include(FetchContent)
+  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    googlebenchmark
+    URL https://github.com/google/benchmark/archive/refs/tags/v1.9.1.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  FetchContent_MakeAvailable(googlebenchmark)
+
+  add_subdirectory(benchmarks)
 endif()

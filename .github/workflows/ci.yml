@@ -32,6 +32,14 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Benchmark smoke check
+        run: ./build/benchmarks/lob_bench
+        # Sanitizers are on in this job (see Configure above), so these
+        # numbers aren't meaningful perf data -- this just confirms the
+        # benchmark binary builds and runs cleanly under ASan/UBSan.
+        # Real benchmark numbers are collected locally in an unsanitized
+        # build; see README's Benchmarking section.
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -44,7 +52,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find include src tests -name '*.hpp' -o -name '*.cpp' \
+          find include src tests benchmarks -name '*.hpp' -o -name '*.cpp' \
             | xargs clang-format --dry-run --Werror
 
       - name: Configure (for compile_commands.json)
