@@ -85,8 +85,7 @@ warning on this machine, confirming as much). What's actually done: each
 benchmark pre-populates a realistic book depth (warm-up), then samples
 100,000 individual operation latencies via `std::chrono::steady_clock`,
 reporting p50/p90/p99/p99.9/p99.99 alongside Google Benchmark's own
-throughput counter -- a repeatable measurement methodology under real-world
-noise, not a claim of rigorous lab conditions.
+throughput counter.
 
 ### Matching engine (this machine, unsanitized Release build)
 
