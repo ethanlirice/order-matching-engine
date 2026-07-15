@@ -42,6 +42,7 @@ if(LOB_ENABLE_SANITIZERS)
 endif()
 
 add_subdirectory(src)
+add_subdirectory(sim)
 
 if(LOB_BUILD_TESTS)
   include(FetchContent)

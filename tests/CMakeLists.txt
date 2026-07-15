@@ -4,10 +4,11 @@ add_executable(lob_tests
   determinism_test.cpp
   order_pool_test.cpp
   spsc_ring_buffer_test.cpp
+  sim/event_ordering_test.cpp
 )
 
 target_include_directories(lob_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(lob_tests PRIVATE lob GTest::gtest_main lob_warnings lob_sanitizers
+target_link_libraries(lob_tests PRIVATE lob_sim GTest::gtest_main lob_warnings lob_sanitizers
                        Threads::Threads)
 
 include(GoogleTest)
