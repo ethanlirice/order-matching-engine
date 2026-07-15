@@ -16,6 +16,21 @@ imbalance), the full metrics suite, pybind11 bindings, and a Python
 analytics layer producing the required plots and parameter sweeps -- see
 Market-making study below.
 
+## Quickstart
+
+```bash
+git clone <this repo> && cd order-matching-engine
+./scripts/demo.sh
+```
+
+One command: configures (Release), builds, runs the full test suite,
+smoke-checks the benchmark harness, and reproduces M5's headline plots
+into `analysis/output/` — well under 10 minutes on a clean checkout (a
+full from-scratch run, including fetching/building googletest/Google
+Benchmark/pybind11, took ~35s on the machine this was verified on). If
+the last step reports a `lob_bindings` import error, see the "multi-Python"
+note under Market-making study below — the script prints the exact fix.
+
 ## Build
 
 ```bash
@@ -125,7 +140,16 @@ small marginal win).
 | Benchmark | Result |
 |---|---|
 | Single-threaded push+pop round trip | p50 41ns |
-| Genuine two-thread throughput | ~49M items/sec |
+| Genuine two-thread throughput | 33-53M items/sec across repeated runs (~44M typical) |
+
+The two-thread number is the least stable measurement in this table run
+to run on this shared, unpinned machine (33M-53M/s observed across five
+consecutive runs at M6) — reported as a range rather than a single
+reassuring point estimate, per the environmental caveat above. The
+single-threaded and matching-engine numbers were all re-confirmed at M6
+and are unchanged from M3 to within noise, as expected: no L1 hot-path
+code has changed since (M4/M5 only added new, separate methods and
+consumers of the existing `MatchingEngine`/`OrderBook` API).
 
 ### Array-vs-tree price levels (§5.2 — evaluated, not adopted)
 
@@ -149,14 +173,36 @@ bottleneck. Revisit in M4/M5 if that changes.
 
 ## Architecture
 
-Four layers, each independently testable:
+Four layers, each independently testable. Arrows point from a layer to
+what it depends on — L1 has zero dependency on anything above it, which
+is the one boundary this project won't relax:
 
+```mermaid
+graph BT
+    L1["<b>L1 — Matching engine</b><br/>src/, include/lob/*.hpp<br/>Order, Level, OrderBook, MatchingEngine, OrderPool"]
+    L2["<b>L2 — Strategy interface</b><br/>include/lob/sim/strategy.hpp<br/>Strategy, OrderIntentSink, BookSnapshot"]
+    L3["<b>L3 — Simulator</b><br/>sim/<br/>Simulator, VirtualClock, SyntheticGenerator, MarketDataLog"]
+    L4cpp["<b>L4 — Market-making (C++)</b><br/>mm/<br/>MarketMaker, Naive/InventoryCapped/AS/OFI, Metrics, SimulationRunner"]
+    Bindings["<b>bindings/</b><br/>pybind11 (thin wrapper, no logic)"]
+    L4py["<b>L4 — Analytics (Python)</b><br/>analysis/<br/>sweeps, plots, findings"]
+
+    L2 --> L1
+    L3 --> L1
+    L3 --> L2
+    L4cpp --> L2
+    L4cpp --> L3
+    Bindings --> L4cpp
+    L4py --> Bindings
+
+    style L1 fill:#ffddaa,stroke:#333,stroke-width:2px
 ```
-L4  Research / analytics   (Python, pybind11)
-L3  Simulation / event loop (C++)
-L2  Strategy interface      (C++)
-L1  Matching engine / order book (C++)  <- the core
-```
+
+The engine doesn't know what a "strategy" is; a strategy doesn't know how
+the engine stores orders. `MarketMaker` subclasses implement `Strategy`
+(L2) and are driven by `Simulator` (L3), which owns the one shared
+`MatchingEngine` (L1) that both replayed and strategy-issued orders match
+against. `bindings/` and `analysis/` are strictly one-way: Python never
+reaches below the single `RunSimulation` entry point.
 
 Architecture diagram and result plots (from the M5 market-making study)
 land in M6; the benchmark table above is maintained as of M3.
