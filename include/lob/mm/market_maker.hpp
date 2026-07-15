@@ -96,6 +96,41 @@ struct Fill {
 //     best price is verifiably not entirely our own resting order, and
 //     otherwise holds the last such verified mid steady rather than
 //     feeding a self-referential value back into ComputeQuotes.
+//
+// Two more failure modes surface once a strategy is driven by continuous
+// real order flow (not just a couple of static seed orders) rather than
+// self-reference alone:
+//  3. A strategy's own reservation-price math can legitimately swing far
+//     enough after just one or two fills (e.g. AS/OFI's inventory skew,
+//     which scales with gamma*sigma^2*tau -- large for a long remaining
+//     horizon) that the resulting quote would cross real external
+//     liquidity. PostOnly rejects a crossing Submit/Modify -- but with
+//     nothing else having changed, the very next ComputeQuotes call
+//     reproduces the exact same crossing price, which without a guard is
+//     a genuine reject-resubmit infinite loop, not just a missed quote.
+//     OnBookUpdate clamps the desired quote against the raw external
+//     market (never at or through the current opposing best price)
+//     before reconciling.
+//  4. A signal that depends on whether our own order shares a price level
+//     with real external liquidity or rests alone (e.g. OFI's excluded
+//     quantity, via OwnRestingQuantityAt) can be discontinuous exactly at
+//     that boundary: moving to join external liquidity introduces an
+//     imbalance signal that computes a price avoiding that level, but
+//     that very avoidance removes the signal that caused the move,
+//     producing a limit cycle that never converges -- observed as both a
+//     2-tick cycle and a longer 3-tick one (10012 -> 10013 -> 10014 ->
+//     10012 -> ...), so detecting the specific reversal pattern isn't
+//     general enough. The fix is a per-tick circuit breaker instead:
+//     SideState counts consecutive Modifies issued for that side at the
+//     same virtual timestamp (`now`), and once that count reaches
+//     kMaxConsecutiveModifiesPerTick, further Modifies for that side are
+//     suppressed (holding its current resting price) until `now` actually
+//     advances. A genuinely convergent settling cascade (geometric
+//     decay, see #2) reaches a fixed point in a small number of
+//     iterations, well under the cap; only a non-converging cycle -- of
+//     any period -- ever hits it. The count resets as soon as `now`
+//     changes, so this only ever suppresses same-tick self-churn, never
+//     a strategy's response to genuinely new information.
 class MarketMaker : public sim::Strategy {
  public:
   void OnBookUpdate(const sim::BookSnapshot& snapshot, Timestamp now, std::uint64_t event_ordinal,
@@ -135,7 +170,13 @@ class MarketMaker : public sim::Strategy {
     OrderId order_id = 0;
     Price resting_price = 0;
     Quantity resting_quantity = 0;
+
+    // Per-tick circuit breaker state -- see the class comment's #4.
+    int consecutive_modifies = 0;
+    Timestamp modify_streak_time = 0;
   };
+
+  static constexpr int kMaxConsecutiveModifiesPerTick = 20;
 
   // Submits/modifies this side toward the desired price/quantity if it
   // doesn't already match. Returns true iff it issued a Submit or Modify

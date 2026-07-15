@@ -1,5 +1,6 @@
 #include "lob/mm/market_maker.hpp"
 
+#include <algorithm>
 #include <cassert>
 
 namespace lob::mm {
@@ -12,6 +13,25 @@ void MarketMaker::OnBookUpdate(const sim::BookSnapshot& snapshot, Timestamp now,
     // floor-clamping -- this catches a bug in that clamp itself, not a
     // runtime data condition.
     assert(desired.bid_price < desired.ask_price);
+  }
+
+  // Safety clamp against the raw external market: a strategy's own
+  // reservation-price math (e.g. AS/OFI's inventory skew, which scales
+  // with gamma*sigma^2*tau -- large for a long remaining horizon) can
+  // legitimately swing far enough after just one or two fills that the
+  // "desired" quote would cross real external liquidity. PostOnly rejects
+  // a crossing Submit/Modify (cancelling the original, per the class
+  // comment on OnOrderAck) -- but with nothing else having changed, the
+  // very next ComputeQuotes call reproduces the exact same crossing
+  // price, and without this clamp that's a genuine reject-resubmit
+  // infinite loop, not just a missed quote. Never let our own bid reach
+  // or exceed the current best ask, or our own ask reach or fall below
+  // the current best bid.
+  if (desired.has_bid && snapshot.has_ask) {
+    desired.bid_price = std::min(desired.bid_price, snapshot.best_ask - 1);
+  }
+  if (desired.has_ask && snapshot.has_bid) {
+    desired.ask_price = std::max(desired.ask_price, snapshot.best_bid + 1);
   }
 
   // Cancels are immediate/un-acked (Simulator never fires OnOrderAck for
@@ -52,17 +72,33 @@ bool MarketMaker::TryRequoteSide(SideState& state, Price desired_price, Quantity
     state.order_id = intents.Submit(command);
     state.resting_price = desired_price;
     state.resting_quantity = desired_quantity;
+    state.consecutive_modifies = 0;
     action_pending_ = true;
     return true;
   }
-  if (state.resting_price != desired_price || state.resting_quantity != desired_quantity) {
-    intents.Modify(state.order_id, desired_price, desired_quantity);
-    state.resting_price = desired_price;
-    state.resting_quantity = desired_quantity;
-    action_pending_ = true;
-    return true;
+  if (state.resting_price == desired_price && state.resting_quantity == desired_quantity) {
+    state.consecutive_modifies = 0;
+    return false;
   }
-  return false;
+
+  // Per-tick circuit breaker (see the class comment's #4): the streak
+  // count only tracks Modifies issued at the SAME virtual timestamp --
+  // real time advancing means something genuinely new happened, not just
+  // our own churn, so the streak resets there regardless of the count.
+  if (state.modify_streak_time != now) {
+    state.consecutive_modifies = 0;
+    state.modify_streak_time = now;
+  }
+  if (state.consecutive_modifies >= kMaxConsecutiveModifiesPerTick) {
+    return false;
+  }
+
+  intents.Modify(state.order_id, desired_price, desired_quantity);
+  state.resting_price = desired_price;
+  state.resting_quantity = desired_quantity;
+  ++state.consecutive_modifies;
+  action_pending_ = true;
+  return true;
 }
 
 std::optional<double> MarketMaker::ReferenceMid(const sim::BookSnapshot& snapshot) const {
