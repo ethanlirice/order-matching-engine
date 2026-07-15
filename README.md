@@ -4,11 +4,13 @@ A low-latency limit-order-book (LOB) matching engine in C++, wrapped in an
 event-driven simulator, used as a lab for inventory-aware market-making
 strategies (Avellaneda-Stoikov, order-flow-imbalance).
 
-**Status: M3 — make it fast.** All five order types, price-time-priority
+**Status: M4 — simulator.** All five order types, price-time-priority
 matching, cancel, modify, and trade events are implemented and tested
-(M1/M2). M3 adds a pooled allocator, a cache-friendly `Order` layout, a
-lock-free SPSC ring buffer, a percentile-reporting benchmark harness, and
-an array-vs-tree evaluation for price levels -- see Benchmarking below.
+(M1/M2); M3 added a pooled allocator, cache-friendly layout, a lock-free
+SPSC ring buffer, and a benchmark harness (see Benchmarking below). M4
+adds the L3 event-driven simulator: data replay, a virtual clock, the
+queue-position fill model, a latency model, and a strategy callback
+interface -- see Simulator below.
 
 ## Build
 
@@ -154,3 +156,88 @@ L1  Matching engine / order book (C++)  <- the core
 
 Architecture diagram and result plots (from the M5 market-making study)
 land in M6; the benchmark table above is maintained as of M3.
+
+## Simulator (M4)
+
+`sim/` is the L3 event-driven simulator: a single discrete-event loop
+(`Simulator`, `include/lob/sim/simulator.hpp`) drains a min-heap of `Event`s
+in strict `(timestamp, kind, sequence)` order, driving one shared
+`MatchingEngine` — never wall-clock (`VirtualClock` tracks the last-
+processed timestamp and asserts it never moves backward).
+
+**Data source scope: synthetic-only for M4.** True L3 (per-order) data
+isn't freely available for crypto exchanges, and LOBSTER (real equities L3
+data) requires registering on their site to obtain — neither is fetchable
+in an automated way. `SyntheticGenerator` (`include/lob/sim/
+synthetic_generator.hpp`) produces a seeded, deterministic Poisson-arrival
+order-flow stream instead (PROJECT_SPEC.md §7 "Synthetic mode"), which is
+enough to satisfy M4's literal "done when" bar (replay a sample day,
+reconstruct correctly, deterministic strategy hooks). **Real-data
+(LOBSTER) validation of replay realism is an explicit, tracked follow-up**,
+not silently folded into "done" here.
+
+### The queue-position fill model is (almost) free
+PROJECT_SPEC.md §7 requires that "a resting maker order sits behind the
+volume already at its price and only fills once the queue ahead of it is
+consumed." `OrderBook` already implements byte-correct price-time priority
+with strict FIFO-per-level (M1-M3) and doesn't distinguish whose order is
+resting — injecting a strategy's order into the *same* `OrderBook`
+instance processing replayed flow, at the correct chronological position,
+already gives correct queue-position realism with no separate queue-depth
+data structure. This holds specifically for **L3-granularity input** (true
+per-order arrival sequence) — exactly what the synthetic generator
+produces. `tests/sim/queue_position_test.cpp` is the direct, end-to-end
+proof: a strategy order injected behind existing resting volume does not
+fill until a later taker exactly exhausts everything ahead of it.
+
+### Design decisions worth knowing
+- **No `Execute` replay message type.** "Directly apply a recorded
+  historical execution" (mark a specific resting order id as filled by
+  fiat) is actively wrong once a strategy order can be interposed between
+  historical makers — it would silently ignore the strategy order and
+  violate price-time priority. `ReplayMessage` is `{Add, Cancel}` only; the
+  synthetic generator emits marketable orders as ordinary `Add`s and needs
+  no reconstruction. The correct approach for real L3 data (a future
+  milestone) is to synthesize an implicit aggressor `Add` from grouped
+  `Execute` records and let the engine re-derive the match against
+  whatever's actually resting, never bypass matching.
+- **Disjoint id-namespace.** Historical/generator ids start at 1; strategy-
+  issued ids start at `kStrategyIdBase = 1 << 63` (`include/lob/sim/
+  id_space.hpp`), assigned internally by `Simulator` — a `Strategy` never
+  handles raw ids. Without this partition, a collision would silently hit
+  `OrderBook::add_order`'s duplicate-id rejection and drop a strategy
+  order with no error signal.
+- **Strict event tie-break.** Equal-timestamp events are never left to
+  `std::priority_queue`'s unspecified tie behavior: `Replay` events sort
+  before `StrategyOrderArrival` events at the same tick (no look-ahead
+  bias — a strategy action must never jump ahead of a historical event it
+  couldn't have observed yet), then by a monotonic push-order `sequence`.
+- **`Strategy` never touches `MatchingEngine` directly** — only the narrow
+  `OrderIntentSink` (`Submit`/`Cancel`/`Modify`), which schedules a
+  delayed event rather than applying anything synchronously. This is what
+  actually enforces the latency model; a direct engine reference would let
+  a future strategy bypass it.
+- **Uniform callback-firing rule.** After every engine-state-changing call
+  (replay or strategy-issued): `OnTrade` once per `TradeEvent` in fill
+  order, then exactly one `OnBookUpdate` with the final state — regardless
+  of what triggered it.
+- **No self-trade prevention.** The engine has no owner concept (L1 must
+  not know about strategies) and this design doesn't add server-side STP.
+  A strategy that would cross its own resting order is responsible for
+  avoiding that itself — matching how many real venues don't offer STP by
+  default.
+
+### Testing
+- `tests/sim/event_ordering_test.cpp` — event tie-break ordering, virtual
+  clock monotonicity.
+- `tests/sim/synthetic_generator_test.cpp` — same-seed determinism, id/
+  timestamp invariants.
+- `tests/sim/golden_replay_test.cpp` — a **hand-constructed** trace (not
+  generated-and-snapshotted, which would only prove self-consistency) with
+  **independently hand-computed** expected checkpoints, covering a same-
+  level multi-order partial-fill sweep and a genuine mid-queue cancel.
+- `tests/sim/queue_position_test.cpp` — the core insight, tested end-to-end.
+- `tests/sim/simulator_determinism_test.cpp` — two independent runs with
+  identical seeded input (including a strategy that itself submits orders,
+  exercising strategy-event/replay-event interleaving, not just pure
+  replay) produce byte-identical callback sequences and final book state.
