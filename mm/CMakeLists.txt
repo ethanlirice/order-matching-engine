@@ -5,6 +5,7 @@ add_library(lob_mm STATIC
   market_maker.cpp
   naive_maker.cpp
   inventory_capped_maker.cpp
+  avellaneda_stoikov_maker.cpp
 )
 target_include_directories(lob_mm PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(lob_mm PUBLIC lob_sim)

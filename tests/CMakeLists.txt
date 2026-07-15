@@ -15,6 +15,7 @@ add_executable(lob_tests
   mm/market_maker_test.cpp
   mm/naive_maker_test.cpp
   mm/inventory_capped_maker_test.cpp
+  mm/avellaneda_stoikov_maker_test.cpp
 )
 
 target_include_directories(lob_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
