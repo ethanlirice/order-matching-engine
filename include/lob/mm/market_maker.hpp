@@ -131,7 +131,7 @@ struct Fill {
 //     Modifies issued for that side since it last genuinely converged (no
 //     change needed) or was freshly submitted -- NOT reset merely because
 //     `now` advances -- and once that count reaches
-//     kMaxConsecutiveModifiesPerTick, further Modifies for that side are
+//     kMaxConsecutiveModifies, further Modifies for that side are
 //     suppressed (holding its current resting price) until a real
 //     convergence happens. A genuinely convergent settling cascade
 //     (geometric decay, see #2) reaches a fixed point in a small number

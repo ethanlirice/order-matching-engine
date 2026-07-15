@@ -26,8 +26,8 @@ struct AddOrderResult {
 
 // Single-symbol limit order book: two sides (bids, asks), each a price ->
 // Level map ordered so the best bid is the highest price and the best ask
-// is the lowest. Interface only covers Limit and Market orders in M1;
-// IOC/FOK/PostOnly are explicitly rejected until M2.
+// is the lowest. Supports Limit, Market, IOC, FOK, and PostOnly orders
+// (PROJECT_SPEC.md §2/§14 M1 and M2).
 class OrderBook {
  public:
   // `pool_capacity` sizes the initial Order-object memory pool (M3 §6);
@@ -37,8 +37,10 @@ class OrderBook {
   explicit OrderBook(std::size_t pool_capacity = 65536) : pool_(pool_capacity) {}
 
   // Aggressive (crossing) orders walk the opposing book in price-time
-  // priority; any remainder rests (Limit) or is dropped (Market). Rejects
-  // (as fully cancelled) duplicate order ids and out-of-scope order types.
+  // priority; any remainder rests (Limit) or is dropped (Market/IOC).
+  // FOK is all-or-nothing (pre-checked, never partially filled) and
+  // PostOnly is rejected outright if it would cross. Also rejects (as
+  // fully cancelled) duplicate order ids.
   AddOrderResult add_order(Order incoming);
 
   // Cancels a resting order by id. Returns its remaining quantity, or
