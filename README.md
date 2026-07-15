@@ -4,17 +4,19 @@ A low-latency limit-order-book (LOB) matching engine in C++, wrapped in an
 event-driven simulator, used as a lab for inventory-aware market-making
 strategies (Avellaneda-Stoikov, order-flow-imbalance).
 
-**Status: M5 — market-making study.** All five order types, price-time-
-priority matching, cancel, modify, and trade events are implemented and
-tested (M1/M2); M3 added a pooled allocator, cache-friendly layout, a
-lock-free SPSC ring buffer, and a benchmark harness (see Benchmarking
-below). M4 added the L3 event-driven simulator: data replay, a virtual
-clock, the queue-position fill model, a latency model, and a strategy
-callback interface (see Simulator below). M5 adds four market-making
-strategies (naive, inventory-capped, Avellaneda-Stoikov, order-flow-
-imbalance), the full metrics suite, pybind11 bindings, and a Python
-analytics layer producing the required plots and parameter sweeps -- see
-Market-making study below.
+**Status: M6 — polish (all milestones complete).** All five order types,
+price-time-priority matching, cancel, modify, and trade events are
+implemented and tested (M1/M2); M3 added a pooled allocator, cache-friendly
+layout, a lock-free SPSC ring buffer, and a benchmark harness (see
+Benchmarking below). M4 added the L3 event-driven simulator: data replay, a
+virtual clock, the queue-position fill model, a latency model, and a
+strategy callback interface (see Simulator below). M5 added four
+market-making strategies (naive, inventory-capped, Avellaneda-Stoikov,
+order-flow-imbalance), the full metrics suite, pybind11 bindings, and a
+Python analytics layer producing the required plots and parameter sweeps
+(see Market-making study below). M6 added this architecture diagram, the
+one-command `./scripts/demo.sh` below, an API cleanup pass, and
+[`RESULTS.md`](RESULTS.md)'s design/results recap.
 
 See [`RESULTS.md`](RESULTS.md) for a short, standalone recap of the key
 engineering decisions and M5 findings (including three real reconciliation
@@ -208,8 +210,10 @@ the engine stores orders. `MarketMaker` subclasses implement `Strategy`
 against. `bindings/` and `analysis/` are strictly one-way: Python never
 reaches below the single `RunSimulation` entry point.
 
-Architecture diagram and result plots (from the M5 market-making study)
-land in M6; the benchmark table above is maintained as of M3.
+The benchmark table above was re-verified at M6 (see the SPSC ring buffer
+section) and was otherwise unchanged from M3 to within noise; result plots
+from the M5 market-making study are reproduced by `./scripts/demo.sh` and
+findings are summarized further down.
 
 ## Simulator (M4)
 
