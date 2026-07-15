@@ -119,6 +119,16 @@ class MarketMaker : public sim::Strategy {
   // directly from the snapshot.
   std::optional<double> ReferenceMid(const sim::BookSnapshot& snapshot) const;
 
+  // Our own currently-resting quantity if it's at exactly `price` on
+  // `side`, else 0. For a strategy computing a signal from a raw book
+  // quantity (e.g. OFI's imbalance ratio), the naive quantity at our own
+  // best price includes our own order -- this is what lets a strategy
+  // exclude it and react only to genuinely external volume.
+  Quantity OwnRestingQuantityAt(Side side, Price price) const {
+    const SideState& state = (side == Side::Buy) ? bid_ : ask_;
+    return (state.has_resting && state.resting_price == price) ? state.resting_quantity : 0;
+  }
+
  private:
   struct SideState {
     bool has_resting = false;

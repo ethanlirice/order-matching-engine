@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "lob/mm/market_maker.hpp"
 
 namespace lob::mm {
@@ -49,6 +51,21 @@ class AvellanedaStoikovMaker : public MarketMaker {
 
  protected:
   Quote ComputeQuotes(const sim::BookSnapshot& snapshot, Timestamp now) override;
+
+  struct ReservationAndSpread {
+    double reservation_price;
+    double half_spread;
+  };
+
+  // The r/half_spread computation above, exposed so OfiMaker (which
+  // extends this model with an order-flow-imbalance skew term on top of
+  // the same reservation price) doesn't have to re-derive or duplicate
+  // it. nullopt under the same condition ComputeQuotes returns an empty
+  // Quote (no trustworthy mid yet -- see MarketMaker::ReferenceMid).
+  std::optional<ReservationAndSpread> ComputeReservationAndHalfSpread(
+      const sim::BookSnapshot& snapshot, Timestamp now) const;
+
+  const AvellanedaStoikovConfig& config() const { return config_; }
 
  private:
   AvellanedaStoikovConfig config_;

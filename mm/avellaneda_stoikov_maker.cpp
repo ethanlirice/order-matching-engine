@@ -15,11 +15,12 @@ AvellanedaStoikovMaker::AvellanedaStoikovMaker(AvellanedaStoikovConfig config, T
   assert(config_.sigma >= 0.0);
 }
 
-Quote AvellanedaStoikovMaker::ComputeQuotes(const sim::BookSnapshot& snapshot, Timestamp now) {
-  Quote quote;
+std::optional<AvellanedaStoikovMaker::ReservationAndSpread>
+AvellanedaStoikovMaker::ComputeReservationAndHalfSpread(const sim::BookSnapshot& snapshot,
+                                                        Timestamp now) const {
   std::optional<double> mid = ReferenceMid(snapshot);
   if (!mid.has_value()) {
-    return quote;
+    return std::nullopt;
   }
 
   double tau = sim::TimeRemaining(horizon_, now);
@@ -36,12 +37,22 @@ Quote AvellanedaStoikovMaker::ComputeQuotes(const sim::BookSnapshot& snapshot, T
   double half_spread = variance_term / 2.0 + adverse_selection_term;
   half_spread = std::max(half_spread, 1.0);
 
+  return ReservationAndSpread{reservation_price, half_spread};
+}
+
+Quote AvellanedaStoikovMaker::ComputeQuotes(const sim::BookSnapshot& snapshot, Timestamp now) {
+  Quote quote;
+  std::optional<ReservationAndSpread> rs = ComputeReservationAndHalfSpread(snapshot, now);
+  if (!rs.has_value()) {
+    return quote;
+  }
+
   quote.has_bid = true;
-  quote.bid_price = RoundToTick(reservation_price - half_spread);
+  quote.bid_price = RoundToTick(rs->reservation_price - rs->half_spread);
   quote.bid_quantity = config_.quote_size;
 
   quote.has_ask = true;
-  quote.ask_price = RoundToTick(reservation_price + half_spread);
+  quote.ask_price = RoundToTick(rs->reservation_price + rs->half_spread);
   quote.ask_quantity = config_.quote_size;
 
   return quote;
