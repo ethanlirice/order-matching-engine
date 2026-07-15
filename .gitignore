@@ -3,8 +3,13 @@ PROJECT_SPEC.md
 CLAUDE.md
 SETUP_GUIDE.md
 
+# --- local tooling state ---
+.claude/
+
 # --- build & artifacts ---
 build/
+build-tsan/
+build-fuzz/
 *.o
 *.a
 *.so

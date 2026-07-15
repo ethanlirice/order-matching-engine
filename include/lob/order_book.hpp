@@ -53,6 +53,12 @@ class OrderBook {
   bool best_bid(Price& out_price) const;
   bool best_ask(Price& out_price) const;
 
+  // Total resting quantity at a price level on the given side, or 0 if
+  // there's no such level. A real production accessor (not test-only) --
+  // aggregate price-level depth, like best_bid/best_ask, not order-level
+  // detail.
+  Quantity quantity_at(Side side, Price price) const;
+
   // -- Read-only testability accessors (unit/fuzz/determinism tests only;
   // no strategy/simulator code should depend on these). --
   bool contains(OrderId id) const;

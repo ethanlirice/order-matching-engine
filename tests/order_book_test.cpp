@@ -545,5 +545,21 @@ TEST(OrderBookMemoryPoolTest, NoNewChunksAfterWarmingUpToCapacity) {
       << "steady-state add/cancel after warm-up must not grow the pool further";
 }
 
+// -- quantity_at (M5: top-of-book depth for OFI) ----------------------------
+
+TEST(OrderBookTest, QuantityAtReturnsZeroForAbsentLevel) {
+  OrderBook book;
+  EXPECT_EQ(book.quantity_at(Side::Buy, 100), 0u);
+  EXPECT_EQ(book.quantity_at(Side::Sell, 100), 0u);
+}
+
+TEST(OrderBookTest, QuantityAtSumsAllOrdersAtALevel) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 105, 4));
+  book.add_order(MakeOrder(2, Side::Sell, OrderType::Limit, 105, 6));
+  EXPECT_EQ(book.quantity_at(Side::Sell, 105), 10u);
+  EXPECT_EQ(book.quantity_at(Side::Buy, 105), 0u);
+}
+
 }  // namespace
 }  // namespace lob

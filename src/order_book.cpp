@@ -228,6 +228,15 @@ bool OrderBook::best_ask(Price& out_price) const {
   return true;
 }
 
+Quantity OrderBook::quantity_at(Side side, Price price) const {
+  if (side == Side::Buy) {
+    auto it = bids_.find(price);
+    return it == bids_.end() ? 0 : it->second.total_quantity();
+  }
+  auto it = asks_.find(price);
+  return it == asks_.end() ? 0 : it->second.total_quantity();
+}
+
 bool OrderBook::contains(OrderId id) const {
   return order_index_.contains(id);
 }
