@@ -16,6 +16,10 @@ imbalance), the full metrics suite, pybind11 bindings, and a Python
 analytics layer producing the required plots and parameter sweeps -- see
 Market-making study below.
 
+See [`RESULTS.md`](RESULTS.md) for a short, standalone recap of the key
+engineering decisions and M5 findings (including three real reconciliation
+bugs found by driving the strategies with continuous synthetic flow).
+
 ## Quickstart
 
 ```bash
