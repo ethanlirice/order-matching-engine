@@ -11,6 +11,7 @@ add_executable(lob_tests
   sim/simulator_determinism_test.cpp
   sim/order_ack_test.cpp
   sim/market_data_log_test.cpp
+  sim/time_utils_test.cpp
 )
 
 target_include_directories(lob_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
