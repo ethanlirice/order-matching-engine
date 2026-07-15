@@ -1,18 +1,22 @@
 #pragma once
 
 #include "lob/order.hpp"
+#include "lob/order_book.hpp"
 #include "lob/order_command.hpp"
 
 namespace lob::sim {
 
 // Narrow, read-only view of top-of-book state handed to a Strategy --
 // never OrderBook itself (PROJECT_SPEC.md §4: L2 must not know how the
-// engine stores orders).
+// engine stores orders). Quantities are total resting size at the best
+// price (M5: top-of-book buy/sell pressure for the OFI strategy).
 struct BookSnapshot {
   bool has_bid = false;
   Price best_bid = 0;
+  Quantity best_bid_quantity = 0;
   bool has_ask = false;
   Price best_ask = 0;
+  Quantity best_ask_quantity = 0;
 };
 
 // The ONLY thing a Strategy can touch to act -- implemented by Simulator.
@@ -46,6 +50,16 @@ class Strategy {
   virtual void OnBookUpdate(const BookSnapshot& snapshot, Timestamp now,
                             OrderIntentSink& intents) = 0;
   virtual void OnTrade(const TradeEvent& trade, Timestamp now, OrderIntentSink& intents) = 0;
+
+  // Fired right after every Submit/Modify the strategy itself issued
+  // actually applies to the book (before OnTrade/OnBookUpdate) -- gives
+  // ground truth on what happened, since a PostOnly modify-to-a-crossing-
+  // price can silently cancel the original order AND reject the
+  // replacement (both gone) with no other signal. Default no-op: opt-in
+  // for strategies that care about tracking their own resting state
+  // reliably (all of M5's market makers do; a hypothetical simpler
+  // strategy that always re-derives everything fresh doesn't have to).
+  virtual void OnOrderAck(OrderId /*id*/, const AddOrderResult& /*result*/) {}
 };
 
 }  // namespace lob::sim

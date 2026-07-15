@@ -54,6 +54,9 @@ void Simulator::ApplyStrategyIntent(const StrategyIntent& intent) {
       order.timestamp = intent.submit.timestamp;
 
       AddOrderResult result = engine_.submit_order(order);
+      if (strategy_ != nullptr) {
+        strategy_->OnOrderAck(intent.submit.id, result);
+      }
       HandleTrades(result.trades);
       break;
     }
@@ -65,6 +68,12 @@ void Simulator::ApplyStrategyIntent(const StrategyIntent& intent) {
     case StrategyIntent::Kind::Modify: {
       auto result =
           engine_.modify_order(intent.target_id, intent.modify_price, intent.modify_quantity);
+      if (strategy_ != nullptr) {
+        // Unknown id -> treat as "fully gone" (all-zero result): shouldn't
+        // happen in practice since a strategy only modifies ids it
+        // believes are resting, but there's no other meaningful ack.
+        strategy_->OnOrderAck(intent.target_id, result.has_value() ? *result : AddOrderResult{});
+      }
       HandleTrades(result.has_value() ? result->trades : std::vector<TradeEvent>{});
       break;
     }
@@ -89,10 +98,12 @@ void Simulator::HandleTrades(const std::vector<TradeEvent>& trades) {
   if (engine_.book().best_bid(price)) {
     snapshot.has_bid = true;
     snapshot.best_bid = price;
+    snapshot.best_bid_quantity = engine_.book().quantity_at(Side::Buy, price);
   }
   if (engine_.book().best_ask(price)) {
     snapshot.has_ask = true;
     snapshot.best_ask = price;
+    snapshot.best_ask_quantity = engine_.book().quantity_at(Side::Sell, price);
   }
   strategy_->OnBookUpdate(snapshot, clock_.now(), *this);
 }
