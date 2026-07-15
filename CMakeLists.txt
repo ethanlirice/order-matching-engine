@@ -5,6 +5,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# lob_bindings (below) is a shared module that links the lob/lob_sim/lob_mm
+# static libraries -- on Linux (unlike macOS), linking non-PIC static
+# libraries into a shared object fails at link time ("recompile with
+# -fPIC"), caught by CI's Ubuntu jobs. PIC's overhead is negligible on the
+# architectures this targets, so it's simplest and safest to apply
+# globally rather than special-case just the libraries bindings needs.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
