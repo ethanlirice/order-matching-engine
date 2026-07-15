@@ -7,6 +7,7 @@
 #include "lob/order.hpp"
 #include "lob/sim/event.hpp"
 #include "lob/sim/id_space.hpp"
+#include "lob/sim/market_data_log.hpp"
 #include "lob/sim/strategy.hpp"
 #include "lob/sim/virtual_clock.hpp"
 
@@ -64,6 +65,7 @@ class Simulator : public OrderIntentSink {
   // -- Read-only test/debug accessors --
   const OrderBook& DebugBook() const;
   const std::vector<TradeEvent>& trade_log() const { return trade_log_; }
+  const MarketDataLog& market_data_log() const { return market_data_log_; }
   Timestamp now() const { return clock_.now(); }
 
  private:
@@ -76,10 +78,15 @@ class Simulator : public OrderIntentSink {
   EventQueue queue_;
   MatchingEngine engine_;
   std::vector<TradeEvent> trade_log_;
+  MarketDataLog market_data_log_;
   Strategy* strategy_ = nullptr;
   Timestamp latency_ = 0;
   OrderId next_strategy_id_ = kStrategyIdBase;
   std::uint64_t next_sequence_ = 0;
+  // Monotonic, incremented once per processed event (any kind) in Run() --
+  // gives market_data_log_ a true global strict processing order, unlike
+  // Event::sequence (only unique within one event kind's bucket).
+  std::uint64_t event_ordinal_ = 0;
 };
 
 }  // namespace lob::sim

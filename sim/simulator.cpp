@@ -15,6 +15,7 @@ void Simulator::Run() {
     Event event = queue_.top();
     queue_.pop();
     clock_.advance_to(event.timestamp);
+    ++event_ordinal_;
 
     if (event.kind == EventKind::Replay) {
       ApplyReplayMessage(std::get<ReplayMessage>(event.payload));
@@ -85,6 +86,12 @@ void Simulator::HandleTrades(const std::vector<TradeEvent>& trades) {
     trade_log_.push_back(trade);
   }
 
+  Price bid_price = 0;
+  Price ask_price = 0;
+  bool has_bid = engine_.book().best_bid(bid_price);
+  bool has_ask = engine_.book().best_ask(ask_price);
+  market_data_log_.Record(clock_.now(), event_ordinal_, has_bid, bid_price, has_ask, ask_price);
+
   if (strategy_ == nullptr) {
     return;
   }
@@ -94,16 +101,15 @@ void Simulator::HandleTrades(const std::vector<TradeEvent>& trades) {
   }
 
   BookSnapshot snapshot;
-  Price price = 0;
-  if (engine_.book().best_bid(price)) {
+  if (has_bid) {
     snapshot.has_bid = true;
-    snapshot.best_bid = price;
-    snapshot.best_bid_quantity = engine_.book().quantity_at(Side::Buy, price);
+    snapshot.best_bid = bid_price;
+    snapshot.best_bid_quantity = engine_.book().quantity_at(Side::Buy, bid_price);
   }
-  if (engine_.book().best_ask(price)) {
+  if (has_ask) {
     snapshot.has_ask = true;
-    snapshot.best_ask = price;
-    snapshot.best_ask_quantity = engine_.book().quantity_at(Side::Sell, price);
+    snapshot.best_ask = ask_price;
+    snapshot.best_ask_quantity = engine_.book().quantity_at(Side::Sell, ask_price);
   }
   strategy_->OnBookUpdate(snapshot, clock_.now(), *this);
 }

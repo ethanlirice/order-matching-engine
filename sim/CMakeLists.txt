@@ -4,6 +4,7 @@
 add_library(lob_sim STATIC
   synthetic_generator.cpp
   simulator.cpp
+  market_data_log.cpp
 )
 target_include_directories(lob_sim PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(lob_sim PUBLIC lob)
