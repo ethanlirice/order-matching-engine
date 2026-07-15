@@ -13,7 +13,7 @@ namespace {
 class QueuePositionTestStrategy : public Strategy {
  public:
   void OnBookUpdate(const BookSnapshot& /*snapshot*/, Timestamp now,
-                    OrderIntentSink& intents) override {
+                    std::uint64_t /*event_ordinal*/, OrderIntentSink& intents) override {
     if (submitted_) {
       return;
     }
@@ -27,7 +27,8 @@ class QueuePositionTestStrategy : public Strategy {
     submitted_ = true;
   }
 
-  void OnTrade(const TradeEvent& trade, Timestamp /*now*/, OrderIntentSink& /*intents*/) override {
+  void OnTrade(const TradeEvent& trade, Timestamp /*now*/, std::uint64_t /*event_ordinal*/,
+               OrderIntentSink& /*intents*/) override {
     if (trade.maker_order_id == order_id_) {
       fills_.push_back(trade.size);
     }

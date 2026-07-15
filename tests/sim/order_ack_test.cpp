@@ -18,8 +18,8 @@ struct AckRecord {
 // from OnBookUpdate, so each test can drive one specific scenario.
 class AckRecordingStrategy : public Strategy {
  public:
-  void OnBookUpdate(const BookSnapshot&, Timestamp, OrderIntentSink&) override {}
-  void OnTrade(const TradeEvent&, Timestamp, OrderIntentSink&) override {}
+  void OnBookUpdate(const BookSnapshot&, Timestamp, std::uint64_t, OrderIntentSink&) override {}
+  void OnTrade(const TradeEvent&, Timestamp, std::uint64_t, OrderIntentSink&) override {}
 
   void OnOrderAck(OrderId id, const AddOrderResult& result) override {
     acks_.push_back(AckRecord{id, result});

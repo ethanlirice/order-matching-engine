@@ -97,7 +97,7 @@ void Simulator::HandleTrades(const std::vector<TradeEvent>& trades) {
   }
 
   for (const TradeEvent& trade : trades) {
-    strategy_->OnTrade(trade, clock_.now(), *this);
+    strategy_->OnTrade(trade, clock_.now(), event_ordinal_, *this);
   }
 
   BookSnapshot snapshot;
@@ -111,7 +111,7 @@ void Simulator::HandleTrades(const std::vector<TradeEvent>& trades) {
     snapshot.best_ask = ask_price;
     snapshot.best_ask_quantity = engine_.book().quantity_at(Side::Sell, ask_price);
   }
-  strategy_->OnBookUpdate(snapshot, clock_.now(), *this);
+  strategy_->OnBookUpdate(snapshot, clock_.now(), event_ordinal_, *this);
 }
 
 Event Simulator::MakeStrategyEvent(StrategyIntent intent) {

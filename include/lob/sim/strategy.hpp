@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include "lob/order.hpp"
 #include "lob/order_book.hpp"
 #include "lob/order_command.hpp"
@@ -43,13 +45,20 @@ class OrderIntentSink {
 // fire once per simulator event (coarse-grained), not on L1's per-
 // operation matching hot path, so §6's "avoid virtual dispatch on the hot
 // path" guidance doesn't apply here.
+//
+// `event_ordinal` is Simulator's monotonic per-processed-event counter
+// (see market_data_log.hpp) -- strategies that log fills for later
+// markout/effective-spread analysis need this to correlate a fill with
+// MarketDataLog's as-of queries, which are keyed on (timestamp,
+// event_ordinal) rather than timestamp alone.
 class Strategy {
  public:
   virtual ~Strategy() = default;
 
   virtual void OnBookUpdate(const BookSnapshot& snapshot, Timestamp now,
-                            OrderIntentSink& intents) = 0;
-  virtual void OnTrade(const TradeEvent& trade, Timestamp now, OrderIntentSink& intents) = 0;
+                            std::uint64_t event_ordinal, OrderIntentSink& intents) = 0;
+  virtual void OnTrade(const TradeEvent& trade, Timestamp now, std::uint64_t event_ordinal,
+                       OrderIntentSink& intents) = 0;
 
   // Fired right after every Submit/Modify the strategy itself issued
   // actually applies to the book (before OnTrade/OnBookUpdate) -- gives

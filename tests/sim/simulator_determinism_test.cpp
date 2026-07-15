@@ -13,6 +13,7 @@ struct RecordedCallback {
 
   Kind kind = Kind::BookUpdate;
   Timestamp now = 0;
+  std::uint64_t event_ordinal = 0;
   BookSnapshot snapshot;  // valid iff kind == BookUpdate
   TradeEvent trade;       // valid iff kind == Trade
 };
@@ -24,11 +25,12 @@ struct RecordedCallback {
 // this strategy can never itself introduce nondeterminism.
 class RecordingStrategy : public Strategy {
  public:
-  void OnBookUpdate(const BookSnapshot& snapshot, Timestamp now,
+  void OnBookUpdate(const BookSnapshot& snapshot, Timestamp now, std::uint64_t event_ordinal,
                     OrderIntentSink& intents) override {
     RecordedCallback entry;
     entry.kind = RecordedCallback::Kind::BookUpdate;
     entry.now = now;
+    entry.event_ordinal = event_ordinal;
     entry.snapshot = snapshot;
     log_.push_back(entry);
 
@@ -44,10 +46,12 @@ class RecordingStrategy : public Strategy {
     }
   }
 
-  void OnTrade(const TradeEvent& trade, Timestamp now, OrderIntentSink& /*intents*/) override {
+  void OnTrade(const TradeEvent& trade, Timestamp now, std::uint64_t event_ordinal,
+               OrderIntentSink& /*intents*/) override {
     RecordedCallback entry;
     entry.kind = RecordedCallback::Kind::Trade;
     entry.now = now;
+    entry.event_ordinal = event_ordinal;
     entry.trade = trade;
     log_.push_back(entry);
   }
@@ -88,6 +92,7 @@ TEST(SimulatorDeterminismTest, IdenticalSeededRunsProduceByteIdenticalCallbacksA
     const RecordedCallback& entry_b = strategy_b.log()[i];
     ASSERT_EQ(entry_a.kind, entry_b.kind) << "divergence at callback index " << i;
     EXPECT_EQ(entry_a.now, entry_b.now);
+    EXPECT_EQ(entry_a.event_ordinal, entry_b.event_ordinal);
     if (entry_a.kind == RecordedCallback::Kind::BookUpdate) {
       EXPECT_EQ(entry_a.snapshot.has_bid, entry_b.snapshot.has_bid);
       EXPECT_EQ(entry_a.snapshot.best_bid, entry_b.snapshot.best_bid);
