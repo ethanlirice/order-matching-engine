@@ -81,15 +81,12 @@ bool MarketMaker::TryRequoteSide(SideState& state, Price desired_price, Quantity
     return false;
   }
 
-  // Per-tick circuit breaker (see the class comment's #4): the streak
-  // count only tracks Modifies issued at the SAME virtual timestamp --
-  // real time advancing means something genuinely new happened, not just
-  // our own churn, so the streak resets there regardless of the count.
-  if (state.modify_streak_time != now) {
-    state.consecutive_modifies = 0;
-    state.modify_streak_time = now;
-  }
-  if (state.consecutive_modifies >= kMaxConsecutiveModifiesPerTick) {
+  // Circuit breaker (see the class comment's #4): NOT reset by `now`
+  // advancing -- a self-sustaining oscillation keeps recurring at
+  // ever-later timestamps whenever latency > 0, since each reaction's own
+  // ack naturally arrives later, so only genuine convergence (the
+  // early-return above) may reset this.
+  if (state.consecutive_modifies >= kMaxConsecutiveModifies) {
     return false;
   }
 

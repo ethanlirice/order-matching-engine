@@ -117,20 +117,29 @@ struct Fill {
 //     that boundary: moving to join external liquidity introduces an
 //     imbalance signal that computes a price avoiding that level, but
 //     that very avoidance removes the signal that caused the move,
-//     producing a limit cycle that never converges -- observed as both a
-//     2-tick cycle and a longer 3-tick one (10012 -> 10013 -> 10014 ->
-//     10012 -> ...), so detecting the specific reversal pattern isn't
-//     general enough. The fix is a per-tick circuit breaker instead:
-//     SideState counts consecutive Modifies issued for that side at the
-//     same virtual timestamp (`now`), and once that count reaches
+//     producing a limit cycle that never converges -- observed as a
+//     2-tick cycle, a longer 3-tick one, and (with nonzero latency, where
+//     each self-triggered reaction lands at a genuinely later `now` --
+//     `now + latency` -- rather than the same tick) a 2-tick cycle that
+//     keeps recurring at ever-increasing timestamps forever, well past
+//     the data source's own configured session length. That last variant
+//     defeated an earlier version of this fix that only capped Modifies
+//     issued at the SAME `now`: with latency > 0 there often isn't a
+//     "same tick" to count against, since each reaction's own ack
+//     naturally arrives at a later timestamp. The fix is a plain
+//     cumulative circuit breaker instead: SideState counts consecutive
+//     Modifies issued for that side since it last genuinely converged (no
+//     change needed) or was freshly submitted -- NOT reset merely because
+//     `now` advances -- and once that count reaches
 //     kMaxConsecutiveModifiesPerTick, further Modifies for that side are
-//     suppressed (holding its current resting price) until `now` actually
-//     advances. A genuinely convergent settling cascade (geometric
-//     decay, see #2) reaches a fixed point in a small number of
-//     iterations, well under the cap; only a non-converging cycle -- of
-//     any period -- ever hits it. The count resets as soon as `now`
-//     changes, so this only ever suppresses same-tick self-churn, never
-//     a strategy's response to genuinely new information.
+//     suppressed (holding its current resting price) until a real
+//     convergence happens. A genuinely convergent settling cascade
+//     (geometric decay, see #2) reaches a fixed point in a small number
+//     of iterations and resets the counter well under the cap; only a
+//     non-converging cycle -- of any period, at any latency -- ever hits
+//     it and holds there for the rest of the session, which is an
+//     acceptable, rare, conservative fallback given the alternative is an
+//     unbounded hang.
 class MarketMaker : public sim::Strategy {
  public:
   void OnBookUpdate(const sim::BookSnapshot& snapshot, Timestamp now, std::uint64_t event_ordinal,
@@ -171,12 +180,13 @@ class MarketMaker : public sim::Strategy {
     Price resting_price = 0;
     Quantity resting_quantity = 0;
 
-    // Per-tick circuit breaker state -- see the class comment's #4.
+    // Circuit-breaker state -- see the class comment's #4. Counts
+    // consecutive Modifies issued since this side last genuinely
+    // converged; NOT reset merely because `now` advances.
     int consecutive_modifies = 0;
-    Timestamp modify_streak_time = 0;
   };
 
-  static constexpr int kMaxConsecutiveModifiesPerTick = 20;
+  static constexpr int kMaxConsecutiveModifies = 50;
 
   // Submits/modifies this side toward the desired price/quantity if it
   // doesn't already match. Returns true iff it issued a Submit or Modify
