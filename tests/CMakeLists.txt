@@ -12,10 +12,11 @@ add_executable(lob_tests
   sim/order_ack_test.cpp
   sim/market_data_log_test.cpp
   sim/time_utils_test.cpp
+  mm/market_maker_test.cpp
 )
 
 target_include_directories(lob_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(lob_tests PRIVATE lob_sim GTest::gtest_main lob_warnings lob_sanitizers
+target_link_libraries(lob_tests PRIVATE lob_mm GTest::gtest_main lob_warnings lob_sanitizers
                        Threads::Threads)
 
 include(GoogleTest)

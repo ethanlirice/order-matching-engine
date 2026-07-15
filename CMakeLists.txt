@@ -43,6 +43,7 @@ endif()
 
 add_subdirectory(src)
 add_subdirectory(sim)
+add_subdirectory(mm)
 
 if(LOB_BUILD_TESTS)
   include(FetchContent)
