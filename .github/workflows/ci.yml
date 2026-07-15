@@ -15,7 +15,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build clang
+          sudo apt-get install -y cmake ninja-build clang python3-dev
 
       - name: Configure
         env:
@@ -76,6 +76,35 @@ jobs:
         # "NOT_BUILT" failure placeholder for any discovered-but-unbuilt
         # test binary otherwise.
 
+  python-bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build clang python3-dev
+
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+        # LOB_ENABLE_SANITIZERS stays OFF (default) here, deliberately:
+        # an ASan/UBSan-instrumented shared library dlopen'd by a clean
+        # Python host process fails ASan's interceptor installation, so
+        # the bindings/python_smoke_test only ever get exercised in an
+        # unsanitized build -- see tests/CMakeLists.txt.
+
+      - name: Build
+        run: cmake --build build --target lob_bindings -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -R python_smoke_test
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -88,7 +117,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          find include src tests benchmarks -name '*.hpp' -o -name '*.cpp' \
+          find include src sim mm bindings tests benchmarks -name '*.hpp' -o -name '*.cpp' \
             | xargs clang-format --dry-run --Werror
 
       - name: Configure (for compile_commands.json)
@@ -99,5 +128,5 @@ jobs:
 
       - name: clang-tidy (informational)
         run: |
-          find include src -name '*.hpp' -o -name '*.cpp' \
+          find include src sim mm bindings -name '*.hpp' -o -name '*.cpp' \
             | xargs clang-tidy -p build || true

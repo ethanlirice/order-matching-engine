@@ -40,6 +40,11 @@ class MarketDataLog {
   std::optional<double> MidAsOf(Timestamp timestamp, std::uint64_t event_ordinal) const;
   std::optional<double> MidStrictlyBefore(Timestamp timestamp, std::uint64_t event_ordinal) const;
 
+  // The full recorded series, for callers building their own time series
+  // (e.g. M5's Python analytics layer plotting mid price over a session)
+  // rather than an as-of query at a single point.
+  const std::vector<MidPriceSample>& samples() const { return samples_; }
+
  private:
   std::vector<MidPriceSample> samples_;
 };

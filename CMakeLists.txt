@@ -45,6 +45,39 @@ add_subdirectory(src)
 add_subdirectory(sim)
 add_subdirectory(mm)
 
+# pybind11 bindings (PROJECT_SPEC.md §11): Python drives sweeps/plotting
+# through one entry point (RunSimulation); every strategy stays C++-only.
+# Needs Python3's development headers (python3-dev on Debian/Ubuntu --
+# see .github/workflows/ci.yml) -- default ON only when that component is
+# actually found, so a bare checkout without it still configures/builds
+# everything else, same pattern as LOB_BUILD_FUZZERS above.
+find_package(Python3 COMPONENTS Interpreter Development QUIET)
+if(Python3_Development_FOUND)
+  option(LOB_BUILD_BINDINGS "Build the pybind11 Python bindings" ON)
+else()
+  option(LOB_BUILD_BINDINGS "Build the pybind11 Python bindings" OFF)
+endif()
+
+if(LOB_BUILD_BINDINGS)
+  # Force pybind11 to resolve Python via the same modern FindPython3
+  # module used above, not its own legacy FindPythonInterp/FindPythonLibs
+  # search -- on a machine with more than one Python installed, those two
+  # searches can disagree (compiling the module against a different
+  # interpreter than the one CTest later launches it with is an ABI
+  # mismatch: the module simply fails to import).
+  set(PYBIND11_FINDPYTHON ON)
+
+  include(FetchContent)
+  FetchContent_Declare(
+    pybind11
+    URL https://github.com/pybind/pybind11/archive/refs/tags/v2.13.6.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+  )
+  FetchContent_MakeAvailable(pybind11)
+
+  add_subdirectory(bindings)
+endif()
+
 if(LOB_BUILD_TESTS)
   include(FetchContent)
   FetchContent_Declare(

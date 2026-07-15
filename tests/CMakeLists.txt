@@ -18,6 +18,7 @@ add_executable(lob_tests
   mm/avellaneda_stoikov_maker_test.cpp
   mm/ofi_maker_test.cpp
   mm/metrics_test.cpp
+  mm/simulation_runner_test.cpp
 )
 
 target_include_directories(lob_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -39,6 +40,27 @@ if(LOB_BUILD_TSAN_TESTS)
   target_compile_options(lob_tsan_tests PRIVATE -fsanitize=thread)
   target_link_options(lob_tsan_tests PRIVATE -fsanitize=thread)
   gtest_discover_tests(lob_tsan_tests)
+endif()
+
+if(LOB_BUILD_BINDINGS AND NOT LOB_ENABLE_SANITIZERS)
+  # Not registered under LOB_ENABLE_SANITIZERS: an ASan/UBSan-instrumented
+  # shared library dlopen'd by a clean (non-instrumented) Python host
+  # process fails ASan's interceptor installation ("Interceptors are not
+  # working... AddressSanitizer loaded too late") -- a known incompatible
+  # combination, not a bug in the bindings. See .github/workflows/ci.yml's
+  # separate python-bindings job, which builds/runs this without
+  # sanitizers.
+  #
+  # Runs against the just-built lob_bindings module: PYTHONPATH points at
+  # its output directory via a generator expression so this works
+  # regardless of where the build tree lives.
+  add_test(
+    NAME python_smoke_test
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/test_smoke.py
+  )
+  set_tests_properties(python_smoke_test PROPERTIES
+    ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:lob_bindings>"
+  )
 endif()
 
 if(LOB_BUILD_FUZZERS)
