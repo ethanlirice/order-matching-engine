@@ -25,6 +25,11 @@ class MatchingEngine {
   std::optional<Quantity> cancel_order(OrderId id);
   std::optional<AddOrderResult> modify_order(OrderId id, Price new_price, Quantity new_quantity);
 
+  // Read-only: for test/debug inspection (e.g. the simulator's golden-file
+  // tests). No strategy-facing code should depend on this -- strategies
+  // only ever see a narrow BookSnapshot, never OrderBook itself.
+  const OrderBook& book() const { return book_; }
+
  private:
   OrderBook book_;
   TradeCallback trade_callback_;

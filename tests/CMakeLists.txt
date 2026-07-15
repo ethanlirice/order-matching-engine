@@ -6,6 +6,7 @@ add_executable(lob_tests
   spsc_ring_buffer_test.cpp
   sim/event_ordering_test.cpp
   sim/synthetic_generator_test.cpp
+  sim/golden_replay_test.cpp
 )
 
 target_include_directories(lob_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
