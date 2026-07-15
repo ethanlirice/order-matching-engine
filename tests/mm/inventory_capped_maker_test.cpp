@@ -16,24 +16,30 @@ TEST(InventoryCappedMakerTest, StopsQuotingTheBuySideOnceInventoryHitsTheCap) {
   InventoryCappedMaker maker(config);
   sim::Simulator simulator(&maker, /*latency=*/0);
 
-  // mid = (90 + 110) / 2 = 100 -> bid=95, ask=105.
+  // Seed liquidity settles the maker's quotes on both sides (exact prices
+  // depend on how many single-action reconciliation rounds it takes to
+  // converge -- see MarketMaker's class comment -- so this is checked via
+  // best_bid/best_ask rather than hand-computed from the seed mid).
   simulator.LoadEvents({
       sim::testing::MakeAddEvent(10, 0, 1, Side::Buy, 90, 1000),
       sim::testing::MakeAddEvent(20, 1, 2, Side::Sell, 110, 1000),
   });
   simulator.Run();
-  ASSERT_EQ(simulator.DebugBook().resting_order_ids(Side::Buy, 95).size(), 1u);
-  ASSERT_EQ(simulator.DebugBook().resting_order_ids(Side::Sell, 105).size(), 1u);
+  Price settled_bid = 0;
+  ASSERT_TRUE(simulator.DebugBook().best_bid(settled_bid));
+  ASSERT_GT(settled_bid, 90);
+  ASSERT_EQ(simulator.DebugBook().resting_order_ids(Side::Buy, settled_bid).size(), 1u);
 
-  // A taker sell hits our bid@95 for exactly the quote size -- inventory
+  // An aggressive taker sell (priced to guarantee crossing whatever our
+  // current bid happens to be) for exactly the quote size -- inventory
   // lands exactly at the cap. Our bid is now gone, so best_bid reverts to
   // the seed order@90, shifting mid (and thus the still-active ask) too.
-  simulator.LoadEvents({sim::testing::MakeAddEvent(30, 2, 3, Side::Sell, 95, 10)});
+  simulator.LoadEvents({sim::testing::MakeAddEvent(30, 2, 3, Side::Sell, 1, 10)});
   simulator.Run();
 
   EXPECT_EQ(maker.inventory(), 10);
   // At the cap: stop quoting the buy side entirely.
-  EXPECT_TRUE(simulator.DebugBook().resting_order_ids(Side::Buy, 95).empty());
+  EXPECT_TRUE(simulator.DebugBook().resting_order_ids(Side::Buy, settled_bid).empty());
   // The sell side (which would unwind the position) keeps quoting: the
   // best ask must be tighter than the seed order@110, so it can only be
   // ours, and it should be the only order resting there.
@@ -56,15 +62,19 @@ TEST(InventoryCappedMakerTest, StopsQuotingTheSellSideOnceShortInventoryHitsTheC
       sim::testing::MakeAddEvent(20, 1, 2, Side::Sell, 110, 1000),
   });
   simulator.Run();
-  ASSERT_EQ(simulator.DebugBook().resting_order_ids(Side::Sell, 105).size(), 1u);
+  Price settled_ask = 0;
+  ASSERT_TRUE(simulator.DebugBook().best_ask(settled_ask));
+  ASSERT_LT(settled_ask, 110);
+  ASSERT_EQ(simulator.DebugBook().resting_order_ids(Side::Sell, settled_ask).size(), 1u);
 
-  // A taker buy hits our ask@105 for exactly the quote size -- inventory
+  // An aggressive taker buy (priced to guarantee crossing whatever our
+  // current ask happens to be) for exactly the quote size -- inventory
   // lands exactly at -cap.
-  simulator.LoadEvents({sim::testing::MakeAddEvent(30, 2, 3, Side::Buy, 105, 10)});
+  simulator.LoadEvents({sim::testing::MakeAddEvent(30, 2, 3, Side::Buy, 1'000'000, 10)});
   simulator.Run();
 
   EXPECT_EQ(maker.inventory(), -10);
-  EXPECT_TRUE(simulator.DebugBook().resting_order_ids(Side::Sell, 105).empty());
+  EXPECT_TRUE(simulator.DebugBook().resting_order_ids(Side::Sell, settled_ask).empty());
   // The buy side (which would unwind the position) keeps quoting: the
   // best bid must be tighter than the seed order@90, so it can only be
   // ours, and it should be the only order resting there.

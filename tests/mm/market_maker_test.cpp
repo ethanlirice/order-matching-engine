@@ -63,20 +63,21 @@ TEST(MarketMakerTest, SubmitsPostOnlyQuotesOnBothSidesAndTheyRest) {
   EXPECT_EQ(simulator.DebugBook().quantity_at(Side::Sell, 105), 10u);
 }
 
-TEST(MarketMakerTest, DoesNotIssueASecondActionForASideWhilePendingAckIsOutstanding) {
+TEST(MarketMakerTest, DoesNotIssueASecondActionWhileAnActionIsOutstanding) {
   ScriptedMaker maker;
   sim::Simulator simulator(&maker, /*latency=*/5);
-  // A constant desired quote: this isolates the gate itself. Without it,
-  // RequoteSide would see `!state.has_resting` still true at t=12 (the
-  // ack for the t=10 submit hasn't landed yet -- has_resting is only set
-  // by ApplyAck) and would issue a SECOND Submit for the same side,
-  // creating a duplicate resting order at the same price.
+  // A constant desired quote: this isolates the gate itself. At most one
+  // Submit/Modify is ever in flight across BOTH sides at a time (see
+  // MarketMaker's class comment) -- without that gate, a second
+  // OnBookUpdate firing before the first submit's ack lands could issue a
+  // duplicate/conflicting action before the base class knows whether the
+  // first one rested, crossed, or was rejected.
   maker.QueueQuotes({TwoSidedQuote(90, 10, 110, 10)});
 
-  // t=10: first OnBookUpdate submits bid@90/ask@110, both scheduled to
-  // land (and ack) at t=15 given latency=5.
-  // t=12: second OnBookUpdate fires before either pending submit has
-  // landed.
+  // t=10: first OnBookUpdate submits bid@90 (only one side per round; ask
+  // waits its turn), scheduled to land (and ack) at t=15 given latency=5.
+  // t=12: second OnBookUpdate fires before that submit has landed --
+  // action_pending_ is still true, so nothing new is issued at all.
   simulator.LoadEvents({
       sim::testing::MakeAddEvent(10, 0, 1, Side::Buy, 50, 1),
       sim::testing::MakeAddEvent(12, 1, 2, Side::Buy, 51, 1),

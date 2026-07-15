@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "lob/order.hpp"
@@ -49,9 +50,7 @@ struct Fill {
 // strategies only implement ComputeQuotes; this handles:
 //  - Reconciliation: Submit if nothing's resting on a side, Modify if the
 //    desired price/quantity changed, Cancel if the side should stop
-//    quoting. At most one unacknowledged action per side at a time --
-//    avoids a real race where a second action could be issued against an
-//    id whose fate (rested vs. rejected) the base class doesn't know yet.
+//    quoting.
 //  - Fill attribution via OnTrade's maker_order_id -- safe because every
 //    quote here is OrderType::PostOnly, guaranteeing every fill is maker-
 //    side (never an ambiguous partial-fill-then-rest, never our own order
@@ -69,12 +68,34 @@ struct Fill {
 //
 // Note on self-reference: since a strategy's own resting order can itself
 // become the best bid/ask, ComputeQuotes's view of "mid" can be influenced
-// by the strategy's own prior quotes while a Submit/Modify is settling.
-// Empirically (and by construction, since each side's move only shifts
-// mid by half its delta) this is a damped, self-correcting transient of a
-// handful of extra Modify calls while a side is first established, not an
-// unbounded cascade -- the pending_ack gate caps concurrent in-flight
-// actions per side to one, so it can't runaway regardless.
+// by the strategy's own prior quotes while a Submit/Modify is still
+// settling. Two distinct problems follow from this:
+//  1. If the two sides' Submit/Modify actions were allowed to settle
+//     asynchronously and independently, bid's desired price could be
+//     computed from a snapshot where ask hadn't yet reflected an
+//     already-issued (but not yet applied) ask Modify, and vice versa --
+//     letting one side's Modify cross the OTHER side's own still-resting
+//     order once it finally applied. PostOnly rejects a crossing Modify
+//     by cancelling the original and rejecting the replacement (both
+//     gone) -- and worse, chasing this repeatedly (as a strategy reacts
+//     to its own churn) can cycle forever rather than converge. The fix:
+//     at most ONE Submit/Modify is ever in flight across BOTH sides at a
+//     time (see action_pending_ below) -- whenever a new decision is
+//     made, both sides' resting_price/has_resting are guaranteed to
+//     reflect the actual, fully-settled book state, so a self-cross is
+//     never even computed, let alone attempted.
+//  2. When a strategy's own order is the ENTIRE quantity resting at the
+//     best price on a side, a mid computed from that price is circular:
+//     with no inventory skew (inventory == 0), a constant half-spread
+//     strategy's bid/ask satisfy bid = mid - hs, ask = mid + hs for ANY
+//     mid, so the fixed-point equation has no unique solution -- there is
+//     no restoring force pulling mid back to a "true" external value, and
+//     RoundToTick's toward-zero truncation can then add a small
+//     systematic bias each settling round. ReferenceMid (below) is the
+//     fix: it reports the true book mid only when at least one side's
+//     best price is verifiably not entirely our own resting order, and
+//     otherwise holds the last such verified mid steady rather than
+//     feeding a self-referential value back into ComputeQuotes.
 class MarketMaker : public sim::Strategy {
  public:
   void OnBookUpdate(const sim::BookSnapshot& snapshot, Timestamp now, std::uint64_t event_ordinal,
@@ -90,18 +111,28 @@ class MarketMaker : public sim::Strategy {
  protected:
   virtual Quote ComputeQuotes(const sim::BookSnapshot& snapshot, Timestamp now) = 0;
 
+  // The book mid, guarded against self-reference (see the class comment).
+  // nullopt if there's no trustworthy mid available yet (either the book
+  // isn't two-sided, or it is but only because of our own resting orders
+  // and no external mid has ever been observed). Concrete strategies
+  // should use this instead of computing (best_bid + best_ask) / 2.0
+  // directly from the snapshot.
+  std::optional<double> ReferenceMid(const sim::BookSnapshot& snapshot) const;
+
  private:
   struct SideState {
     bool has_resting = false;
-    bool pending_ack = false;
     OrderId order_id = 0;
     Price resting_price = 0;
     Quantity resting_quantity = 0;
   };
 
-  void RequoteSide(SideState& state, bool desired_has_quote, Price desired_price,
-                   Quantity desired_quantity, Side side, Timestamp now,
-                   sim::OrderIntentSink& intents);
+  // Submits/modifies this side toward the desired price/quantity if it
+  // doesn't already match. Returns true iff it issued a Submit or Modify
+  // (setting action_pending_) -- the caller must not issue another action
+  // this round if so, since only one may be in flight globally at a time.
+  bool TryRequoteSide(SideState& state, Price desired_price, Quantity desired_quantity, Side side,
+                      Timestamp now, sim::OrderIntentSink& intents);
   void ApplyAck(SideState& state, OrderId id, const AddOrderResult& result);
   void ApplyFill(SideState& state, Side side, const TradeEvent& trade, std::uint64_t event_ordinal);
 
@@ -110,6 +141,16 @@ class MarketMaker : public sim::Strategy {
   Inventory inventory_ = 0;
   double cash_ = 0.0;
   std::vector<Fill> fills_;
+
+  // At most one Submit/Modify in flight across BOTH sides at a time (see
+  // the class comment). Cancels aren't gated by this: Simulator never
+  // fires OnOrderAck for a Cancel (nothing to wait on), and a cancelled
+  // side's has_resting is cleared immediately/optimistically, same as
+  // before this gate existed.
+  bool action_pending_ = false;
+
+  mutable bool has_reference_mid_ = false;
+  mutable double reference_mid_ = 0.0;
 };
 
 }  // namespace lob::mm
