@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+
 #include "lob/sim/event.hpp"
 #include "lob/sim/virtual_clock.hpp"
 
@@ -89,10 +91,12 @@ TEST(VirtualClockTest, AdvancesToLaterTimestamp) {
   EXPECT_EQ(clock.now(), 250u);
 }
 
-TEST(VirtualClockDeathTest, MovingBackwardIsRejected) {
+TEST(VirtualClockTest, MovingBackwardIsRejected) {
   VirtualClock clock;
   clock.advance_to(100);
-  EXPECT_DEATH(clock.advance_to(50), "");
+  EXPECT_THROW(clock.advance_to(50), std::logic_error);
+  // The rejected call must not have mutated state.
+  EXPECT_EQ(clock.now(), 100u);
 }
 
 }  // namespace
