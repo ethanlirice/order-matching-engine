@@ -13,6 +13,7 @@ add_executable(lob_tests
   sim/market_data_log_test.cpp
   sim/time_utils_test.cpp
   mm/market_maker_test.cpp
+  mm/naive_maker_test.cpp
 )
 
 target_include_directories(lob_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
