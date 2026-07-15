@@ -22,3 +22,6 @@ __pycache__/
 data/*.csv
 data/*.bin
 data/*.parquet
+
+# --- generated plots (findings are written into README, not the images) ---
+analysis/output/

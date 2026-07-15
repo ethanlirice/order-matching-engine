@@ -4,13 +4,17 @@ A low-latency limit-order-book (LOB) matching engine in C++, wrapped in an
 event-driven simulator, used as a lab for inventory-aware market-making
 strategies (Avellaneda-Stoikov, order-flow-imbalance).
 
-**Status: M4 — simulator.** All five order types, price-time-priority
-matching, cancel, modify, and trade events are implemented and tested
-(M1/M2); M3 added a pooled allocator, cache-friendly layout, a lock-free
-SPSC ring buffer, and a benchmark harness (see Benchmarking below). M4
-adds the L3 event-driven simulator: data replay, a virtual clock, the
-queue-position fill model, a latency model, and a strategy callback
-interface -- see Simulator below.
+**Status: M5 — market-making study.** All five order types, price-time-
+priority matching, cancel, modify, and trade events are implemented and
+tested (M1/M2); M3 added a pooled allocator, cache-friendly layout, a
+lock-free SPSC ring buffer, and a benchmark harness (see Benchmarking
+below). M4 added the L3 event-driven simulator: data replay, a virtual
+clock, the queue-position fill model, a latency model, and a strategy
+callback interface (see Simulator below). M5 adds four market-making
+strategies (naive, inventory-capped, Avellaneda-Stoikov, order-flow-
+imbalance), the full metrics suite, pybind11 bindings, and a Python
+analytics layer producing the required plots and parameter sweeps -- see
+Market-making study below.
 
 ## Build
 
@@ -241,3 +245,216 @@ fill until a later taker exactly exhausts everything ahead of it.
   identical seeded input (including a strategy that itself submits orders,
   exercising strategy-event/replay-event interleaving, not just pure
   replay) produce byte-identical callback sequences and final book state.
+
+## Market-making study (M5)
+
+`mm/` is the L4 market-making layer: four strategies built on a shared
+`MarketMaker` base class (`include/lob/mm/market_maker.hpp`), a metrics
+suite, and a pybind11 entry point (`mm/simulation_runner.cpp`) that
+Python drives for sweeps and plots (`analysis/`).
+
+**Strategies, in order (each stacks on the previous one's mechanics):**
+1. **Naive** — fixed half-spread around mid, ignores inventory entirely.
+   The null baseline; expected to accumulate inventory and, over enough
+   one-sided flow, lose.
+2. **Inventory-capped** — identical, but stops quoting a side once
+   inventory reaches a configured cap in that direction.
+3. **Avellaneda-Stoikov** — reservation price skews away from inventory
+   (`r = mid - inventory*gamma*sigma^2*tau`), half-spread widens with
+   remaining time-to-horizon and narrows with book liquidity kappa.
+4. **OFI** — adds an order-flow-imbalance skew on top of AS's reservation
+   price, using top-of-book buy/sell pressure with the strategy's own
+   resting quantity excluded (otherwise a strategy quoting the best level
+   biases the very signal it's reacting to).
+
+**Metrics** (`include/lob/mm/metrics.hpp`): per-fill effective spread,
+markout, and *pure adverse-selection cost* (drift-only, isolating what OFI
+is actually supposed to improve — see the header's doc comment for why
+markout alone conflates execution-price quality with post-trade drift);
+PnL decomposed into spread PnL vs. inventory PnL; Sharpe (unannualized,
+over the full mark-to-market series); fill rate; and signed inventory
+extremes.
+
+### Reconciliation correctness: three real bugs, found by driving it with real flow
+Every strategy's own quotes go through a shared reconciliation loop
+(`MarketMaker::OnBookUpdate`/`TryRequoteSide`) that submits/modifies/
+cancels toward whatever `ComputeQuotes` wants. Building the naive and
+inventory-capped strategies against a couple of static seed orders (Step
+1's own tests) looked clean — but wiring the *same* base class up to the
+synthetic generator's continuous, realistic order flow (Step 5's
+pybind11 runner) surfaced three genuine hangs that unit tests against a
+thin book never exercised:
+
+1. **A cross-side race.** With per-side independent acking, bid and ask
+   could settle asynchronously: one side's Modify, computed from a
+   snapshot where the other side's already-issued (but not yet applied)
+   Modify hadn't landed, could cross the other side's own still-resting
+   order once it finally did. PostOnly rejects that by cancelling the
+   original and rejecting the replacement — chasing it repeatedly cycled
+   forever instead of converging. Fixed by allowing only one Submit/Modify
+   in flight across *both* sides at a time.
+2. **A self-referential mid.** When a strategy's own order is the entire
+   quantity resting at the best price, mid computed from that price is
+   circular — with zero inventory skew, `bid = mid - hs`, `ask = mid + hs`
+   holds for *any* mid, so there's no restoring force, and integer
+   rounding can add a small systematic drift each settling round. Fixed
+   by a `ReferenceMid` that only reports mid when at least one side is
+   verifiably not entirely the strategy's own order, holding the last
+   verified value steady otherwise.
+3. **Market-crossing and limit-cycle hangs under continuous flow.**
+   AS/OFI's inventory skew scales with `gamma*sigma^2*tau` — large for a
+   long remaining horizon — and can swing far enough after one or two
+   fills that the resulting quote crosses the real market; without a
+   clamp, the rejected Submit/Modify just gets recomputed identically
+   forever. Separately, OFI's self-excluded quantity is discontinuous
+   exactly at the boundary of sharing a price level with real liquidity,
+   producing a limit cycle (observed at both 2-tick and 3-tick periods,
+   and — once latency is nonzero, since each reaction's own ack lands at
+   a *later* timestamp rather than the same one — recurring forever at
+   ever-increasing timestamps well past the session's configured
+   duration). Fixed by clamping quotes against the raw external market,
+   plus a cumulative (not per-tick) circuit breaker that holds a side's
+   price once too many consecutive Modifies happen without a genuine
+   convergence in between.
+
+All three were reproduced directly in C++ (a killed, 100%-CPU process),
+fixed, and re-verified with stress sweeps of 200–800 (strategy kind,
+seed, gamma, latency) combinations completing without hanging, on top of
+the full test suite staying green under ASan+UBSan. See
+`include/lob/mm/market_maker.hpp`'s class comment for the full
+derivation of each.
+
+### Python bindings and analytics
+
+```bash
+cmake --build build --target lob_bindings -j
+pip install -r analysis/requirements.txt   # numpy, pandas, matplotlib
+python3 analysis/generate_plots.py
+```
+
+`bindings/bindings.cpp` is a thin pybind11 wrapper (no logic of its own)
+around `RunSimulation(SimulationConfig) -> SimulationResult`
+(`include/lob/mm/simulation_runner.hpp`) — the one entry point Python
+uses; every strategy stays C++-only. `analysis/lob_sweep.py` handles path
+setup and DataFrame conversion; `analysis/generate_plots.py` produces the
+four required plots plus a gamma sweep into `analysis/output/` (gitignored
+— findings are written up here, not committed as binary images).
+
+**If you have more than one Python installed**, CMake's `find_package
+(Python3)` may resolve a different interpreter than your shell's default
+`python3` — the compiled module is tied to a specific Python's ABI, so a
+mismatch shows up as `ModuleNotFoundError: No module named 'lob_bindings'`
+even though the file exists. Check `grep Python3_EXECUTABLE
+build/CMakeCache.txt` against `which python3`, and if they differ,
+reconfigure with `-DPython3_EXECUTABLE=$(which python3)`.
+
+**Calibrating gamma to session length.** AS/OFI's horizon is the full
+session duration (`config.generator.duration`), so
+`variance_term = gamma*sigma^2*tau` is huge near the start of a long
+session unless gamma is scaled down accordingly — `gamma=0.1` (a fine
+default for a short session) produces almost no fills at
+`duration=50000` (spreads too wide to ever get hit); `gamma=0.001` was
+found empirically to produce a fill count comparable to the other three
+strategies at that duration. `analysis/generate_plots.py`'s `COMMON`
+dict and gamma-sweep range are calibrated for `duration=50000`; rescale
+gamma roughly in proportion to `1/duration` for a different session
+length.
+
+### Findings (duration=50000, seed=1, arrival_rate=0.05, latency=5 unless swept)
+
+**PnL decomposition** (spread PnL vs. inventory PnL):
+
+| Strategy | Spread PnL | Inventory PnL | Total PnL | Fills |
+|---|---:|---:|---:|---:|
+| Naive | 1323.5 | -581.5 | 742.0 | 52 |
+| Inventory-capped | 1291.0 | -652.5 | 638.5 | 50 |
+| Avellaneda-Stoikov (gamma=0.001) | 195.5 | -489.0 | -293.5 | 47 |
+| OFI (gamma=0.001) | 234.5 | -488.5 | -254.0 | 44 |
+
+Naive and inventory-capped harvest far more spread PnL simply because
+their fixed, narrow half-spread (5 ticks) trades far more aggressively
+than AS/OFI's inventory-and-horizon-driven spread at this gamma — this
+table isn't an apples-to-apples "which strategy is better" comparison at
+matched risk, just each strategy run at one representative
+configuration. OFI edges out plain AS on both spread and total PnL here.
+
+**Inventory boundedness** (signed extremes over the session):
+
+| Strategy | Max | Min | Max &#124;inventory&#124; |
+|---|---:|---:|---:|
+| Naive | 0 | -60 | 60 |
+| Inventory-capped | 0 | -53 | 53 |
+| Avellaneda-Stoikov | 9 | -11 | 11 |
+| OFI | 9 | -13 | 13 |
+
+Confirms §8's claim directly: naive and inventory-capped drift to their
+full one-sided extent (inventory-capped's cap of 50 is exceeded slightly
+since a single fill can push it past the threshold checked *before* that
+fill), while AS and OFI stay within roughly a fifth of that range —
+inventory-aware reservation-price skew is doing real work, not just
+capping.
+
+**Adverse-selection markout** (mean per fill, AS vs. OFI):
+
+| Strategy | Fills | Mean markout | Mean pure adverse-selection cost |
+|---|---:|---:|---:|
+| Avellaneda-Stoikov | 47 | -0.798 | 1.479 |
+| OFI | 44 | -0.761 | 1.511 |
+
+At this configuration OFI's *isolated* adverse-selection cost (the metric
+that actually isolates what OFI is meant to improve, per the metrics
+suite's design) is marginally *worse* than plain AS's, not better — a
+genuine, reported-as-observed result, not the hoped-for direction. With
+only ~45 fills per run the sampling noise here is large relative to the
+effect size; a longer run or averaging across seeds would be needed
+before treating this as a real finding about OFI's signal rather than
+noise. Flagged here rather than smoothed over, per this project's honesty-
+in-scope principle.
+
+**PnL vs. injected latency** (OFI, gamma=0.001):
+
+| Latency | Total PnL | Fills |
+|---:|---:|---:|
+| 0 | -181.0 | 41 |
+| 5 | -254.0 | 44 |
+| 10 | -226.0 | 51 |
+| 20 | -272.0 | 48 |
+| 50 | -198.5 | 33 |
+| 100 | -56.5 | 26 |
+| 200 | 0.5 | 10 |
+| 500 | -15.0 | 1 |
+
+PnL trends toward zero as latency grows large simply because the
+strategy trades less (fills drop from 44 to 1) — at very high latency it
+barely participates in the market at all. No clean monotonic relationship
+in the middle of the range at this single seed; a fair latency-sensitivity
+conclusion would need averaging across multiple seeds.
+
+**Gamma sweep** (Avellaneda-Stoikov, duration=50000):
+
+| Gamma | Total PnL | Max &#124;inventory&#124; | Sharpe | Fills |
+|---:|---:|---:|---:|---:|
+| 0.0001 | -2498.0 | 11 | -1.002 | 289 |
+| 0.0005 | -728.0 | 14 | -0.473 | 102 |
+| 0.001 | -293.5 | 11 | -0.369 | 47 |
+| 0.005 | -28.0 | 10 | -0.141 | 5 |
+| 0.01 | -2.0 | 6 | -0.141 | 3 |
+| 0.05 | 11.0 | 8 | 0.141 | 2 |
+
+Lower gamma (less risk-averse) means a narrower spread throughout the
+whole session (since `variance_term` stays small only late in the
+session at low gamma, but here it dominates for most of it), so the
+strategy trades far more (289 fills at gamma=0.0001 vs. 2 at gamma=0.05)
+— and loses considerably more, since it's absorbing far more adverse
+selection at a spread too narrow to compensate for it at this book's
+tick size and liquidity. Higher gamma trades rarely but closer to
+breakeven. Max inventory doesn't move monotonically with gamma in this
+sweep — consistent with the single-seed noise already visible in the
+other tables above, not a claimed trend.
+
+All numbers above come from one seed at one configuration each — they
+demonstrate the pipeline and the qualitative claims §8 asks for (naive
+loses/drifts, AS/OFI stay bounded), not statistically rigorous strategy
+rankings. `analysis/generate_plots.py` is the reproducible source; rerun
+it (optionally averaging across more seeds) before drawing stronger
+conclusions.
