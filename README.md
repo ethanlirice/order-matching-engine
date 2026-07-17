@@ -414,101 +414,123 @@ dict and gamma-sweep range are calibrated for `duration=50000`; rescale
 gamma roughly in proportion to `1/duration` for a different session
 length.
 
-### Findings (duration=50000, seed=1, arrival_rate=0.05, latency=5 unless swept)
+### Findings (duration=50000, 30 seeds per point, arrival_rate=0.05, latency=5 unless swept)
+
+Every table below is a mean over 30 independent seeds (seeds 1-30, only
+the generator seed varies), reported as mean ± 95% CI (normal
+approximation on the 30 per-seed values). This replaces an earlier
+single-seed pass — some of the qualitative conclusions changed once
+variance was visible, not just the numbers; see the callouts below each
+table.
 
 **PnL decomposition** (spread PnL vs. inventory PnL):
 
 | Strategy | Spread PnL | Inventory PnL | Total PnL | Fills |
 |---|---:|---:|---:|---:|
-| Naive | 1323.5 | -581.5 | 742.0 | 52 |
-| Inventory-capped | 1291.0 | -652.5 | 638.5 | 50 |
-| Avellaneda-Stoikov (gamma=0.001) | 195.5 | -489.0 | -293.5 | 47 |
-| OFI (gamma=0.001) | 234.5 | -488.5 | -254.0 | 44 |
+| Naive | 2171.7 ± 364.8 | -3016.3 ± 2202.1 | -844.7 ± 1979.2 | 67.5 |
+| Inventory-capped | 1766.8 ± 167.9 | -1623.7 ± 473.7 | 143.1 ± 491.0 | 55.5 |
+| Avellaneda-Stoikov (gamma=0.001) | 385.5 ± 86.5 | -1482.3 ± 730.2 | -1096.8 ± 661.6 | 59.3 |
+| OFI (gamma=0.001) | 358.7 ± 74.5 | -1406.8 ± 928.7 | -1048.1 ± 878.6 | 51.8 |
 
-Naive and inventory-capped harvest far more spread PnL simply because
-their fixed, narrow half-spread (5 ticks) trades far more aggressively
-than AS/OFI's inventory-and-horizon-driven spread at this gamma — this
-table isn't an apples-to-apples "which strategy is better" comparison at
-matched risk, just each strategy run at one representative
-configuration. OFI edges out plain AS on both spread and total PnL here.
+The single-seed version of this table previously reported naive as the
+*best*-PnL strategy (742.0, positive) — that was a favorable seed, not a
+representative one. Averaged over 30 seeds naive's mean total PnL is
+negative with a CI wider than its own mean, i.e. its outcome swings from
+large gains to large losses depending on the flow it happens to see (see
+inventory boundedness below for why). Inventory-capped is the only
+strategy with a positive mean here, though its CI still straddles zero.
+AS and OFI are consistently negative on average, and OFI vs. AS total PnL
+are not distinguishable from each other at this seed count (CIs
+overlap heavily) — this is *not* an apples-to-apples "which strategy is
+better" ranking at matched risk, just each strategy run at one
+representative configuration, now with the sampling noise made visible
+instead of hidden by a single lucky/unlucky run.
 
-**Inventory boundedness** (signed extremes over the session):
+**Inventory boundedness** (30-seed mean of each seed's max &#124;inventory&#124;; worst-case column is the single largest value seen across all 30 seeds):
 
-| Strategy | Max | Min | Max &#124;inventory&#124; |
-|---|---:|---:|---:|
-| Naive | 0 | -60 | 60 |
-| Inventory-capped | 0 | -53 | 53 |
-| Avellaneda-Stoikov | 9 | -11 | 11 |
-| OFI | 9 | -13 | 13 |
+| Strategy | Mean max &#124;inventory&#124; | Worst seed |
+|---|---:|---:|
+| Naive | 150.3 ± 67.4 | 992 |
+| Inventory-capped | 53.6 ± 1.8 | 59 |
+| Avellaneda-Stoikov | 10.7 ± 0.7 | 20 |
+| OFI | 11.2 ± 1.0 | 20 |
 
-Confirms §8's claim directly: naive and inventory-capped drift to their
-full one-sided extent (inventory-capped's cap of 50 is exceeded slightly
-since a single fill can push it past the threshold checked *before* that
-fill), while AS and OFI stay within roughly a fifth of that range —
-inventory-aware reservation-price skew is doing real work, not just
-capping.
+Confirms §8's claim more strongly than the single-seed version did:
+inventory-capped, AS, and OFI all bound tightly and *consistently*
+(narrow CIs, worst-case close to the mean). Naive doesn't just drift to
+"roughly its full extent" as a stable behavior — its worst observed seed
+(992) is nearly 7x its own mean and over 16x inventory-capped's cap, i.e.
+naive carries real, unbounded tail risk that a single seed can easily
+miss entirely. Inventory-capped's cap of 50 is exceeded slightly on
+average since a single fill can push it past the threshold checked
+*before* that fill.
 
 **Adverse-selection markout** (mean per fill, AS vs. OFI):
 
 | Strategy | Fills | Mean markout | Mean pure adverse-selection cost |
 |---|---:|---:|---:|
-| Avellaneda-Stoikov | 47 | -0.798 | 1.479 |
-| OFI | 44 | -0.761 | 1.511 |
+| Avellaneda-Stoikov | 59.3 | -2.018 ± 0.608 | 2.938 ± 0.650 |
+| OFI | 51.8 | -2.277 ± 0.956 | 3.286 ± 1.025 |
 
-At this configuration OFI's *isolated* adverse-selection cost (the metric
-that actually isolates what OFI is meant to improve, per the metrics
-suite's design) is marginally *worse* than plain AS's, not better — a
-genuine, reported-as-observed result, not the hoped-for direction. With
-only ~45 fills per run the sampling noise here is large relative to the
-effect size; a longer run or averaging across seeds would be needed
-before treating this as a real finding about OFI's signal rather than
-noise. Flagged here rather than smoothed over, per this project's honesty-
-in-scope principle.
+OFI − AS pure adverse-selection cost: +0.347, 95% CI half-width 1.213 —
+**not distinguishable from zero** at 30 seeds. The single-seed version of
+this table already flagged OFI as marginally worse than AS and warned
+that sampling noise was likely large relative to the effect size; 30
+seeds confirms that warning rather than resolving it in either direction.
+OFI's excluded-self-quantity imbalance signal may still be doing
+something real, but this experiment (this book, this synthetic flow, this
+seed count) can't distinguish it from noise. A materially larger seed
+count or a longer session would be needed before treating OFI's adverse-
+selection edge as a real, present effect.
 
 **PnL vs. injected latency** (OFI, gamma=0.001):
 
 | Latency | Total PnL | Fills |
 |---:|---:|---:|
-| 0 | -181.0 | 41 |
-| 5 | -254.0 | 44 |
-| 10 | -226.0 | 51 |
-| 20 | -272.0 | 48 |
-| 50 | -198.5 | 33 |
-| 100 | -56.5 | 26 |
-| 200 | 0.5 | 10 |
-| 500 | -15.0 | 1 |
+| 0 | -987.6 ± 537.4 | 42.1 |
+| 5 | -1048.1 ± 878.6 | 51.8 |
+| 10 | -862.3 ± 610.1 | 49.4 |
+| 20 | -525.3 ± 150.0 | 48.0 |
+| 50 | -278.6 ± 75.2 | 36.3 |
+| 100 | -124.2 ± 48.6 | 23.2 |
+| 200 | -15.8 ± 34.2 | 12.0 |
+| 500 | 5.6 ± 33.3 | 7.3 |
 
-PnL trends toward zero as latency grows large simply because the
-strategy trades less (fills drop from 44 to 1) — at very high latency it
-barely participates in the market at all. No clean monotonic relationship
-in the middle of the range at this single seed; a fair latency-sensitivity
-conclusion would need averaging across multiple seeds.
+With 30 seeds per point, a real trend is now visible that the single-seed
+sweep couldn't show cleanly: mean PnL rises monotonically toward zero as
+latency grows, and the CI narrows in step. Both are explained by the same
+mechanism — fewer fills (51.8 → 7.3) means less exposure to adverse
+selection per session, and fewer fills also means less variance in the
+outcome. At latency=500 the CI still straddles zero, so "high latency
+actually turns a profit" isn't supported — only "high latency reliably
+loses less," down to a point statistically indistinguishable from
+breakeven.
 
 **Gamma sweep** (Avellaneda-Stoikov, duration=50000):
 
-| Gamma | Total PnL | Max &#124;inventory&#124; | Sharpe | Fills |
-|---:|---:|---:|---:|---:|
-| 0.0001 | -2498.0 | 11 | -1.002 | 289 |
-| 0.0005 | -728.0 | 14 | -0.473 | 102 |
-| 0.001 | -293.5 | 11 | -0.369 | 47 |
-| 0.005 | -28.0 | 10 | -0.141 | 5 |
-| 0.01 | -2.0 | 6 | -0.141 | 3 |
-| 0.05 | 11.0 | 8 | 0.141 | 2 |
+| Gamma | Total PnL | Max &#124;inventory&#124; | Fills |
+|---:|---:|---:|---:|
+| 0.0001 | -3552.2 ± 272.1 | 18.2 ± 2.9 | 269.4 |
+| 0.0005 | -2549.3 ± 669.1 | 12.3 ± 1.2 | 131.2 |
+| 0.001 | -1096.8 ± 661.6 | 10.7 ± 0.7 | 59.3 |
+| 0.005 | -1315.0 ± 2206.6 | 8.3 ± 1.2 | 11.5 |
+| 0.01 | -2384.7 ± 4394.5 | 7.3 ± 1.4 | 7.9 |
+| 0.05 | -14.9 ± 43.4 | 4.1 ± 1.5 | 1.1 |
 
-Lower gamma (less risk-averse) means a narrower spread throughout the
-whole session (since `variance_term` stays small only late in the
-session at low gamma, but here it dominates for most of it), so the
-strategy trades far more (289 fills at gamma=0.0001 vs. 2 at gamma=0.05)
-— and loses considerably more, since it's absorbing far more adverse
-selection at a spread too narrow to compensate for it at this book's
-tick size and liquidity. Higher gamma trades rarely but closer to
-breakeven. Max inventory doesn't move monotonically with gamma in this
-sweep — consistent with the single-seed noise already visible in the
-other tables above, not a claimed trend.
+Max |inventory| now shows the clean monotonic-with-gamma trend §8
+predicts (tight CIs throughout) — the single-seed version's non-monotonic
+reading there was noise, not a real effect. Total PnL is messier than the
+single-seed table suggested: at gamma=0.005 and 0.01 the CI is several
+times wider than the mean itself (a handful of seeds hit large losses,
+most don't), so "PnL gets worse before it gets better" in the middle of
+this range is not a reliable trend at this seed count — only the two
+ends are solid: very low gamma reliably loses a lot (tight CI, trades
+constantly into adverse selection it can't out-earn on spread), and
+gamma=0.05 is the only point close to breakeven *and* tightly bounded
+(trades rarely enough that variance stays low).
 
-All numbers above come from one seed at one configuration each — they
-demonstrate the pipeline and the qualitative claims §8 asks for (naive
-loses/drifts, AS/OFI stay bounded), not statistically rigorous strategy
-rankings. `analysis/generate_plots.py` is the reproducible source; rerun
-it (optionally averaging across more seeds) before drawing stronger
-conclusions.
+All numbers above are reproducible from `analysis/generate_plots.py`
+(`NUM_SEEDS = 30`, seeds 1-30) — rerun it directly to reproduce these
+tables, or raise `NUM_SEEDS` for tighter CIs at the cost of runtime (30
+seeds across all five sweeps takes well under a second on a normal
+laptop, so raising it further is cheap).

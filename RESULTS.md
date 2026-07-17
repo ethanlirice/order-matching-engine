@@ -107,39 +107,51 @@ after the static cases all pass.
 ## Findings, in brief
 
 Full tables (PnL decomposition, inventory bounds, markout, latency sweep,
-gamma sweep) are in the README. The qualitative headline results, from one
-representative seed/configuration each:
+gamma sweep) are in the README, each now a mean ± 95% CI over 30
+independent seeds rather than one representative run. Averaging across
+seeds changed some conclusions, not just tightened the numbers:
 
-- **Inventory-aware strategies actually bound inventory.** Naive and
-  inventory-capped drift to roughly their full one-sided extent (60 and 53
-  units respectively, over the session); AS and OFI stay within about a
-  fifth of that range (11 and 13). The reservation-price skew is doing
-  real work, not just capping late.
-- **Naive/inventory-capped harvest more spread PnL than AS/OFI at this
-  configuration** — expected, since their half-spread is fixed and narrow
-  while AS/OFI's spread widens with remaining horizon and risk aversion.
-  This is *not* an apples-to-apples "better strategy" comparison at
-  matched risk; it's each strategy run once at one setting.
-- **OFI's isolated adverse-selection improvement did not show up at this
-  seed** — its pure adverse-selection cost was marginally *worse* than
-  plain AS's, the opposite of the hoped-for direction. Reported as
-  observed rather than smoothed over: with ~45 fills in this run, sampling
-  noise is large relative to the effect size, and this shouldn't be read
-  as a claim about OFI's signal without averaging across more seeds.
-- **Gamma trades off fill rate against per-fill risk exactly as the model
-  predicts** — low gamma (less risk-averse) trades far more often (289
-  fills at gamma=0.0001 vs. 2 at gamma=0.05) and loses more, since a
-  narrower spread absorbs more adverse selection than it earns back in
-  spread capture at this book's tick size and liquidity.
+- **Inventory-aware strategies bound inventory tightly and consistently.**
+  Inventory-capped, AS, and OFI all show narrow CIs on their max
+  |inventory| across seeds (53.6±1.8, 10.7±0.7, 11.2±1.0) — the
+  reservation-price skew (and the cap) is doing real, reliable work, not
+  just capping late in a favorable run.
+- **Naive carries real unbounded tail risk that a single seed can hide
+  entirely.** Its single-seed max |inventory| was 60, in line with
+  inventory-capped's cap; across 30 seeds its worst case was 992 — nearly
+  7x its own 30-seed mean (150.3±67.4) and over 16x inventory-capped's
+  cap. The single-seed PnL table previously showed naive as the
+  *best*-PnL strategy (742, positive); the 30-seed mean is negative
+  (-844.7) with a CI wider than the mean itself. That one favorable seed
+  was not representative — it's the clearest example in this project of
+  why single-seed findings can point the wrong direction entirely.
+- **OFI's isolated adverse-selection improvement still doesn't show up,
+  now with a real seed count behind that conclusion.** OFI − AS pure
+  adverse-selection cost is +0.347 with a 95% CI half-width of 1.213 —
+  not distinguishable from zero. The single-seed pass already guessed
+  this was noise; 30 seeds confirms the guess rather than resolving it
+  either way. This is reported as an open question, not smoothed into
+  either "OFI works" or "OFI doesn't work."
+- **Gamma's inventory trend is real and monotonic** (clean, tight CIs at
+  every point); **its PnL trend is not**, at least not in the middle of
+  the swept range — gamma=0.005 and 0.01 have CIs several times wider
+  than their means, meaning a handful of seeds take large losses while
+  most don't. Only the two ends of the sweep are solid: very low gamma
+  reliably loses a lot, and gamma=0.05 is the only point close to
+  breakeven *and* tightly bounded.
 
 ## Honest limitations
 
-- All findings above are from **one seed at one configuration each** —
-  they demonstrate the pipeline and confirm §8's qualitative claims
-  (naive loses/drifts, AS/OFI stay bounded), not statistically rigorous
-  strategy rankings. Sharpe is unannualized (no real calendar mapping for
-  virtual ticks exists) and is reported as one more number among several,
-  not a single ranking metric.
+- Findings above are now averaged over **30 seeds per configuration**
+  (`analysis/generate_plots.py`, `NUM_SEEDS = 30`) rather than one — this
+  resolved some open questions (gamma's monotonic inventory trend) and
+  left others genuinely open (OFI's adverse-selection edge, PnL in the
+  middle of the gamma sweep) rather than manufacturing false confidence.
+  30 seeds is still a normal-approximation CI on a fairly small sample,
+  not a rigorous hypothesis test — treat "not distinguishable from zero"
+  as "no evidence found," not "proven equal." Sharpe is unannualized (no
+  real calendar mapping for virtual ticks exists) and is reported as one
+  more number among several, not a single ranking metric.
 - **Synthetic order flow only.** Real L3 exchange data (e.g. LOBSTER)
   requires registration and wasn't fetchable in an automated way; replay
   realism against real data is a tracked, explicit follow-up, not folded

@@ -99,6 +99,53 @@ def run(config):
     return lob.run_simulation(config)
 
 
+def run_multi_seed(strategy_name, seeds, **config_kwargs):
+    """Runs the same config across multiple seeds (only `seed` varies) and
+    returns one row per seed with the summary metrics the M5 plots/tables
+    aggregate over. Kept here (not in generate_plots.py) so any future
+    script needing seed-aggregated data doesn't duplicate this loop.
+    """
+    config_kwargs.pop("seed", None)
+    rows = []
+    for seed in seeds:
+        result = run(make_config(strategy_name, seed=seed, **config_kwargs))
+        fills = fills_frame(result)
+        rows.append(
+            {
+                "seed": seed,
+                "total_pnl": result.metrics.pnl.total_pnl,
+                "spread_pnl": result.metrics.pnl.spread_pnl,
+                "inventory_pnl": result.metrics.pnl.inventory_pnl,
+                "max_abs_inventory": result.metrics.max_abs_inventory,
+                "sharpe": result.metrics.sharpe,
+                "n_fills": len(fills),
+                "mean_markout": fills["markout"].mean() if not fills.empty else float("nan"),
+                "mean_pure_adverse_selection_cost": (
+                    fills["pure_adverse_selection_cost"].mean() if not fills.empty else float("nan")
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def summarize(df, value_columns):
+    """Collapses a per-seed DataFrame (as returned by run_multi_seed) into
+    mean/std/95%-CI-half-width per column, using a normal approximation
+    (adequate here -- N=30 seeds, not claiming small-sample exactness).
+    """
+    n = len(df)
+    summary = {"n_seeds": n}
+    for col in value_columns:
+        values = df[col].dropna()
+        mean = values.mean() if not values.empty else float("nan")
+        std = values.std(ddof=1) if len(values) > 1 else float("nan")
+        ci95 = 1.96 * std / (len(values) ** 0.5) if len(values) > 1 else float("nan")
+        summary[f"{col}_mean"] = mean
+        summary[f"{col}_std"] = std
+        summary[f"{col}_ci95"] = ci95
+    return summary
+
+
 def fills_frame(result):
     """One row per fill, joined with its markout/adverse-selection metrics."""
     rows = []
