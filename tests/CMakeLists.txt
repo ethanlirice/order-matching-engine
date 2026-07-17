@@ -42,6 +42,15 @@ if(LOB_BUILD_TSAN_TESTS)
   gtest_discover_tests(lob_tsan_tests)
 endif()
 
+if(Python3_EXECUTABLE)
+  # Pure-Python parser test, no lob_bindings/dlopen involved -- runs
+  # unconditionally, unlike python_smoke_test below.
+  add_test(
+    NAME python_lobster_loader_test
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/test_lobster_loader.py
+  )
+endif()
+
 if(LOB_BUILD_BINDINGS AND NOT LOB_ENABLE_SANITIZERS)
   # Not registered under LOB_ENABLE_SANITIZERS: an ASan/UBSan-instrumented
   # shared library dlopen'd by a clean (non-instrumented) Python host

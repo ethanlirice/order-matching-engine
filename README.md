@@ -234,6 +234,18 @@ reconstruct correctly, deterministic strategy hooks). **Real-data
 (LOBSTER) validation of replay realism is an explicit, tracked follow-up**,
 not silently folded into "done" here.
 
+`analysis/lobster_loader.py` is real, tested groundwork toward that
+follow-up: it parses LOBSTER's public message/orderbook CSV format
+(`tests/python/test_lobster_loader.py` covers it against a small
+hand-crafted fixture, since real data needs registering at
+lobsterdata.com first) and converts Submission/Deletion events 1:1 onto
+`ReplayMessage`'s Add/Cancel model. It deliberately raises
+`UnsupportedLobsterEvent` rather than approximating partial cancellations
+or executions — see that function's docstring for exactly what design
+work (a priority-preserving quantity-reduction API on `OrderBook`, and
+grouping executions into a synthesized aggressor `Add`) is still needed
+before a real sample day can be replayed end-to-end.
+
 ### The queue-position fill model is (almost) free
 PROJECT_SPEC.md §7 requires that "a resting maker order sits behind the
 volume already at its price and only fills once the queue ahead of it is
