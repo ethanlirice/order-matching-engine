@@ -19,9 +19,9 @@ struct ReplayMessage {
   enum class Kind { Add, Cancel, Reduce };
 
   Kind kind = Kind::Add;
-  NewOrderCommand add;          // valid iff kind == Add
-  OrderId cancel_id = 0;        // valid iff kind == Cancel
-  OrderId reduce_id = 0;        // valid iff kind == Reduce
+  NewOrderCommand add;              // valid iff kind == Add
+  OrderId cancel_id = 0;            // valid iff kind == Cancel
+  OrderId reduce_id = 0;            // valid iff kind == Reduce
   Quantity reduce_to_quantity = 0;  // valid iff kind == Reduce
 };
 

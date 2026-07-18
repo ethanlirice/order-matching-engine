@@ -20,9 +20,9 @@ struct LobsterReplayEvent {
 
   Kind kind = Kind::Add;
   OrderId order_id = 0;
-  Side side = Side::Buy;    // valid iff kind == Add
-  Price price = 0;          // valid iff kind == Add
-  Quantity quantity = 0;    // valid iff kind == Add (size) or Reduce (new_quantity)
+  Side side = Side::Buy;  // valid iff kind == Add
+  Price price = 0;        // valid iff kind == Add
+  Quantity quantity = 0;  // valid iff kind == Add (size) or Reduce (new_quantity)
 };
 
 struct BookLevelSnapshot {
@@ -44,6 +44,6 @@ struct BookSnapshotRow {
 // directly comparable, index-for-index, to the LOBSTER orderbook CSV rows
 // analysis/lobster_loader.py kept alongside each emitted event.
 std::vector<BookSnapshotRow> ReplayLobsterEvents(const std::vector<LobsterReplayEvent>& events,
-                                                  int num_levels);
+                                                 int num_levels);
 
 }  // namespace lob::sim

@@ -48,7 +48,7 @@ BookSnapshotRow SnapshotBook(const OrderBook& book, int num_levels) {
 }  // namespace
 
 std::vector<BookSnapshotRow> ReplayLobsterEvents(const std::vector<LobsterReplayEvent>& events,
-                                                  int num_levels) {
+                                                 int num_levels) {
   MatchingEngine engine;
   std::vector<BookSnapshotRow> snapshots;
   snapshots.reserve(events.size());
