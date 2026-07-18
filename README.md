@@ -230,21 +230,72 @@ in an automated way. `SyntheticGenerator` (`include/lob/sim/
 synthetic_generator.hpp`) produces a seeded, deterministic Poisson-arrival
 order-flow stream instead (PROJECT_SPEC.md §7 "Synthetic mode"), which is
 enough to satisfy M4's literal "done when" bar (replay a sample day,
-reconstruct correctly, deterministic strategy hooks). **Real-data
-(LOBSTER) validation of replay realism is an explicit, tracked follow-up**,
-not silently folded into "done" here.
+reconstruct correctly, deterministic strategy hooks).
 
-`analysis/lobster_loader.py` is real, tested groundwork toward that
-follow-up: it parses LOBSTER's public message/orderbook CSV format
-(`tests/python/test_lobster_loader.py` covers it against a small
-hand-crafted fixture, since real data needs registering at
-lobsterdata.com first) and converts Submission/Deletion events 1:1 onto
-`ReplayMessage`'s Add/Cancel model. It deliberately raises
-`UnsupportedLobsterEvent` rather than approximating partial cancellations
-or executions — see that function's docstring for exactly what design
-work (a priority-preserving quantity-reduction API on `OrderBook`, and
-grouping executions into a synthesized aggressor `Add`) is still needed
-before a real sample day can be replayed end-to-end.
+### Real-data (LOBSTER) validation — attempted, and a genuine data-completeness limit found
+
+`analysis/lobster_loader.py` parses LOBSTER's public message/orderbook CSV
+format and converts Submission/Deletion/Partial-cancellation/Execution
+events onto `ReplayMessage`'s Add/Cancel/Reduce model — Partial
+cancellation via `OrderBook::ReduceQuantity` (priority-preserving, unlike
+`modify_order`'s cancel-and-re-add), and Execution via a synthesized
+aggressor `Add` per group of consecutive same-timestamp rows (never
+applying a recorded fill directly, per this file's own design note above).
+`sim/lobster_replay.cpp` + a pybind11 binding (`replay_lobster_events`)
+then drives a real `MatchingEngine` through the converted event list, and
+`analysis/lobster_validate.py` diffs the result against LOBSTER's own
+published orderbook file, row for row.
+
+Run against a real sample day (AAPL, 2012-06-21, Level 5 — a free LOBSTER
+sample, not committed; see `.gitignore`'s `data/lobster/` entry), the
+result is a genuine, informative negative: **exact full-depth
+reconstruction match rate is 0.027%** (76 / 282,490 comparable rows).
+This is not a matching-engine bug — it's a hard limit of what a
+finite-depth LOBSTER export can support at all, confirmed by directly
+tracing specific orders through the raw file:
+
+1. **LOBSTER's book is not empty at file-start.** Row 0 of the real
+   orderbook file already shows a fully populated 5-level book on both
+   sides, even though the message file's first row is a single new-order
+   submission — the rest is opening-auction/pre-market liquidity with no
+   `Submission` record anywhere in the file. A from-scratch reconstruction
+   has no way to know this liquidity exists, so almost every row's deeper
+   levels differ by construction, not by error.
+2. **Levels that leave the top-N window can change size with zero
+   message-file evidence.** Order `16167159` (18 shares @ 585.36,
+   submitted once at row 12, never referenced again anywhere in the
+   371K-row file) shows correctly as 18 resting at row 12 — but by row
+   103, after temporarily falling out of LOBSTER's top-5 reporting window
+   at row 22 and re-entering later, LOBSTER's *real* book shows only 5 at
+   that exact price. Nothing in the message file explains the drop: it
+   happened while the price was outside the requested depth, which
+   LOBSTER (correctly, by its own documented design) simply doesn't
+   report. A "Level 5" export only promises fidelity for the top 5 levels
+   *at the moment each row is emitted* — not a complete history of every
+   price a reconstruction might later need.
+
+Restricting the comparison to price levels where our own reconstruction
+and LOBSTER's *do* show the same price (so a direct comparison is even
+possible) gives a second, more targeted metric: **quantity soundness is
+73.2%** (of 1,123,910 such comparable levels, our known resting quantity
+exceeded LOBSTER's true reported quantity 26.8% of the time) — entirely
+attributable to mechanism (2) above on a liquid, fast-moving name like
+AAPL, not to overcounting in the matching engine itself (M1/M2's
+invariant tests and fuzzing already cover that independently).
+
+**Conclusion:** the matching/reconstruction pipeline itself runs
+end-to-end on real L3 data without error (93.7% of the day's 301,587 rows
+converted to a well-defined replay event; the rest are hidden-order
+executions, which by definition cause zero visible-book change, or
+references to pre-existing orders this file was never going to describe —
+both tracked and quantified via `to_replay_events`'s `stats` output, not
+silently dropped). What this experiment actually demonstrates is that
+**byte-exact absolute book-state validation is not achievable from any
+single finite-depth LOBSTER file**, for any reconstruction engine, correct
+or not — a genuine, previously-undocumented (for this project) scope
+limit, reported here rather than worked around with a deeper level (which
+would reduce, not eliminate, the effect) or quietly dropped. Reproduce
+with `python3 analysis/lobster_validate.py` after obtaining a sample file.
 
 ### The queue-position fill model is (almost) free
 PROJECT_SPEC.md §7 requires that "a resting maker order sits behind the

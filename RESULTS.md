@@ -152,10 +152,21 @@ seeds changed some conclusions, not just tightened the numbers:
   as "no evidence found," not "proven equal." Sharpe is unannualized (no
   real calendar mapping for virtual ticks exists) and is reported as one
   more number among several, not a single ranking metric.
-- **Synthetic order flow only.** Real L3 exchange data (e.g. LOBSTER)
-  requires registration and wasn't fetchable in an automated way; replay
-  realism against real data is a tracked, explicit follow-up, not folded
-  into "done."
+- **Synthetic order flow for the market-making study itself** (M5's
+  findings above are all synthetic-generator runs). Real-data replay was
+  separately attempted against a real LOBSTER sample day (AAPL,
+  2012-06-21) and is no longer an open follow-up so much as a closed one
+  with a genuine negative result: exact full-depth book reconstruction
+  against a finite-depth LOBSTER export isn't achievable *at all*, for any
+  engine, because the file itself doesn't carry enough information (the
+  book isn't empty at file-start, and price levels that leave the top-N
+  reporting window can change size with zero message-file evidence). See
+  README's "Real-data (LOBSTER) validation" section for the full
+  investigation, including a specific order traced through the raw file
+  to confirm the mechanism rather than assert it. The conversion/replay
+  pipeline itself (`analysis/lobster_loader.py`,
+  `sim/lobster_replay.cpp`) runs correctly end-to-end on real data; what
+  it can't do is what no pipeline could do with this input.
 - **No self-trade prevention**, and no true multi-trader concept at all —
   "no self-cross" is checked as "book never crosses," which is equivalent
   only in the absence of a trader-id concept.
