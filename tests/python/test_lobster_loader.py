@@ -5,6 +5,16 @@ registering at lobsterdata.com; see PROJECT_SPEC.md's data-sources note
 and README's tracked follow-up). Deliberately no pytest dependency, same
 convention as test_smoke.py: run directly with the module's directory on
 PYTHONPATH.
+
+Fixture narrative (tests/python/fixtures/lobster_sample_message.csv):
+  t=1  Submission   order=100 Buy  10 @ 100.00
+  t=2  Submission   order=200 Sell 20 @ 100.10
+  t=3  PartialCancel order=200 -5        -> resting 15
+  t=4  Deletion     order=100 (full cancel)
+  t=5  Submission   order=300 Sell 25 @ 100.10  (FIFO after 200 at that price)
+  t=6  Execution    order=200 15 @ 100.10  \\_ grouped: same timestamp,
+  t=6  Execution    order=300 10 @ 100.10  /   same direction
+  t=7  HiddenExecution order=999999 50 @ 99.90 (zero visible-book impact)
 """
 
 import os
@@ -13,6 +23,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "analysis"))
 
 from lobster_loader import (  # noqa: E402  (path must be set up first)
+    AGGRESSOR_ID_BASE,
+    LobsterMessage,
     UnsupportedLobsterEvent,
     parse_message_file,
     parse_orderbook_file,
@@ -26,21 +38,19 @@ ORDERBOOK_FIXTURE = os.path.join(FIXTURES_DIR, "lobster_sample_orderbook.csv")
 
 def test_parse_message_file():
     messages = parse_message_file(MESSAGE_FIXTURE)
-    assert len(messages) == 5
+    assert len(messages) == 8
 
     submission = messages[0]
     assert submission.event_type == 1
-    assert submission.order_id == 10000001
-    assert submission.size == 100
-    assert submission.price == 911400
+    assert submission.order_id == 100
+    assert submission.size == 10
+    assert submission.price == 1000000
     assert submission.direction == 1
 
-    sell_submission = messages[1]
-    assert sell_submission.direction == -1
-
-    deletion = messages[2]
-    assert deletion.event_type == 3
-    assert deletion.order_id == 10000001
+    partial_cancel = messages[2]
+    assert partial_cancel.event_type == 2
+    assert partial_cancel.order_id == 200
+    assert partial_cancel.size == 5
 
 
 def test_parse_orderbook_file():
@@ -61,23 +71,46 @@ def test_parse_orderbook_file():
     assert thin_book.levels[1].bid_size == 0
 
 
-def test_to_replay_events_handles_submission_and_deletion():
+def test_to_replay_events_full_fixture_flow():
     messages = parse_message_file(MESSAGE_FIXTURE)
-    supported = [m for m in messages if m.event_type in (1, 3)]
 
-    events = to_replay_events(supported)
+    events = to_replay_events(messages)
 
     assert events == [
-        ("add", 10000001, "Buy", 911400, 100),
-        ("add", 10000002, "Sell", 912600, 50),
-        ("cancel", 10000001),
+        ("add", 100, "Buy", 1000000, 10),
+        ("add", 200, "Sell", 1001000, 20),
+        ("reduce", 200, 15),
+        ("cancel", 100),
+        ("add", 300, "Sell", 1001000, 25),
+        ("add", AGGRESSOR_ID_BASE, "Buy", 1001000, 25),
+    ], "type-4 group collapses to one synthesized aggressor; type-5 is skipped entirely"
+
+
+def test_to_replay_events_groups_only_consecutive_same_timestamp_same_direction():
+    messages = [
+        LobsterMessage(time_seconds=1.0, event_type=1, order_id=1, size=10, price=100, direction=-1),
+        LobsterMessage(time_seconds=2.0, event_type=1, order_id=2, size=10, price=100, direction=-1),
+        # Two separate aggressor sweeps: different timestamps, must not merge.
+        LobsterMessage(time_seconds=3.0, event_type=4, order_id=1, size=4, price=100, direction=-1),
+        LobsterMessage(time_seconds=4.0, event_type=4, order_id=2, size=3, price=100, direction=-1),
     ]
 
+    events = to_replay_events(messages)
 
-def test_to_replay_events_raises_on_unsupported_event_types():
-    messages = parse_message_file(MESSAGE_FIXTURE)
-    # index 3 is a type-2 partial cancellation, index 4 is a type-4 execution.
-    for unsupported in (messages[3], messages[4]):
+    add_events = [e for e in events if e[0] == "add" and e[1] >= AGGRESSOR_ID_BASE]
+    assert len(add_events) == 2, "different timestamps must produce two separate aggressors, not one group of 7"
+    assert add_events[0][4] == 4
+    assert add_events[1][4] == 3
+
+
+def test_to_replay_events_raises_on_events_with_no_replay_equivalent():
+    cross_trade = LobsterMessage(
+        time_seconds=1.0, event_type=6, order_id=1, size=10, price=100, direction=1
+    )
+    trading_halt = LobsterMessage(
+        time_seconds=1.0, event_type=7, order_id=0, size=0, price=0, direction=1
+    )
+    for unsupported in (cross_trade, trading_halt):
         try:
             to_replay_events([unsupported])
             raise AssertionError(f"expected UnsupportedLobsterEvent for event_type={unsupported.event_type}")
@@ -88,8 +121,9 @@ def test_to_replay_events_raises_on_unsupported_event_types():
 def main():
     test_parse_message_file()
     test_parse_orderbook_file()
-    test_to_replay_events_handles_submission_and_deletion()
-    test_to_replay_events_raises_on_unsupported_event_types()
+    test_to_replay_events_full_fixture_flow()
+    test_to_replay_events_groups_only_consecutive_same_timestamp_same_direction()
+    test_to_replay_events_raises_on_events_with_no_replay_equivalent()
     print("OK")
 
 

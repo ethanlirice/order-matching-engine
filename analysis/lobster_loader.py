@@ -8,13 +8,14 @@ row per event, giving the resulting top-N levels as repeating
 [Ask Price, Ask Size, Bid Price, Bid Size] quadruples; an unoccupied ask
 (bid) level is the sentinel price 9999999999 (-9999999999) with size 0).
 
-This module is deliberately Python-side and NOT yet wired into the C++
-Simulator/ReplayMessage pipeline (see to_replay_events' docstring for
-exactly which LOBSTER event types don't map onto the current {Add, Cancel}
-ReplayMessage model, and why approximating them silently would violate
-this project's no-unmeasured-claims principle). It's real, tested
-groundwork for that wiring, not a throwaway stand-in -- ready to run
-against a real sample day's files as soon as one is available.
+to_replay_events converts Submission/Deletion/Partial-cancellation/
+Execution-of-a-visible-order onto lob::sim::ReplayMessage's Add/Cancel/
+Reduce model (include/lob/sim/replay_message.hpp), now that
+OrderBook::ReduceQuantity exists for priority-preserving partial cancels
+and Simulator dispatches Reduce events. Still deliberately NOT wired into
+a runnable C++ replay path here -- this module only produces the
+normalized event list; feeding it through Simulator and diffing against
+LOBSTER's own orderbook file is the next, separate step.
 """
 
 from dataclasses import dataclass
@@ -102,9 +103,8 @@ def parse_orderbook_file(path, num_levels):
 
 
 class UnsupportedLobsterEvent(NotImplementedError):
-    """Raised for LOBSTER event types that need a real design decision
-    (matching-engine API work or ReplayMessage changes) before they can be
-    converted without silently misrepresenting the historical book."""
+    """Raised for LOBSTER event types with no equivalent at all in the
+    current replay model -- not a to-do, a genuine model gap."""
 
 
 def _side(direction):
@@ -115,54 +115,171 @@ def _side(direction):
     raise ValueError(f"unexpected LOBSTER direction {direction}")
 
 
-def to_replay_events(messages):
+# Aggressor ids synthesized for grouped Execution (type 4) events -- kept
+# well clear of both real LOBSTER order_ids (small increasing integers)
+# and Simulator's own kStrategyIdBase = 1 << 63 (include/lob/sim/
+# id_space.hpp), so a converted LOBSTER replay could run alongside a live
+# strategy without an id collision.
+AGGRESSOR_ID_BASE = 1 << 61
+
+
+def to_replay_events(messages, stats=None):
     """Converts LOBSTER messages to (kind, ...) tuples matching
-    lob::sim::ReplayMessage's Add/Cancel model 1:1 -- the only two kinds
-    that model currently supports (include/lob/sim/replay_message.hpp).
+    lob::sim::ReplayMessage's Add/Cancel/Reduce model
+    (include/lob/sim/replay_message.hpp).
 
-    Handles: Submission (1) -> ("add", order_id, side, price, size).
-             Deletion (3)   -> ("cancel", order_id).
+    Handles:
+      - Submission (1) -> ("add", order_id, side, price, size).
+      - Deletion (3) -> ("cancel", order_id).
+      - Partial cancellation (2) -> ("reduce", order_id, new_size), where
+        new_size = the locally-tracked resting size minus this message's
+        Size (LOBSTER's Size field on a type-2 row is the delta removed,
+        not the resulting total) -- preserves FIFO priority via
+        OrderBook::ReduceQuantity, unlike a cancel-and-re-add.
+      - Execution of a visible order (4) -> one synthesized aggressor
+        ("add", ...) per group of consecutive same-timestamp,
+        same-direction type-4 rows (LOBSTER gives every resting order an
+        incoming aggressor sweep touches the identical Time value, empi-
+        rically verified against the AAPL 2012-06-21 sample: groups up to
+        43 rows). The synthesized order is a marketable Limit priced at
+        the group's worst touched level, sized to the group's total --
+        never applies the recorded fill directly (see
+        replay_message.hpp's header comment for why bypassing matching is
+        wrong once a strategy order can be interposed); the *engine*
+        re-derives the match against whatever is actually resting in the
+        replayed book, so any earlier divergence shows up as a real
+        matching difference instead of being silently papered over.
+      - Execution of a hidden order (5) -> skipped, not approximated. A
+        hidden order was never displayed, so by definition its execution
+        cannot change the displayed book -- correctly zero ReplayMessages,
+        not a gap. Documented cost: the resulting trade print doesn't
+        appear in the replayed engine's trade_log, so trade-tape-level
+        (as opposed to book-state-level) fidelity is reduced by exactly
+        this many events.
 
-    Deliberately raises UnsupportedLobsterEvent for every other type
-    rather than approximating it:
-      - Partial cancellation (2) reduces a resting order's size while
-        preserving its FIFO queue position (real exchange semantics).
-        OrderBook has no such operation today -- modify_order is
-        cancel-then-re-add, which loses queue position instead of
-        preserving it. Needs a new L1 API (with its own invariant tests)
-        before this can be handled correctly, not a Python-side hack.
-      - Execution (4/5) must synthesize an implicit aggressor Add and let
-        the engine re-derive the match, never apply the recorded fill
-        directly (see replay_message.hpp's header comment for why
-        bypassing matching is actively wrong once a strategy order can be
-        interposed). That needs grouping consecutive same-timestamp
-        execution rows against one synthesized aggressor -- hidden-order
-        executions (type 5) can only partially support this since the
-        resting hidden order was never in the visible message stream to
-        begin with.
-      - Cross trade (6) and trading halt (7) have no equivalent in the
-        current Add/Cancel/Execute-less replay model at all.
-    Silently approximating any of these would produce a replay that looks
-    plausible but isn't provably a faithful reconstruction -- exactly what
-    this project's measure-everything/no-unmeasured-claims principle
-    rules out.
+    Pre-existing ("untracked") resting orders: a finite-depth LOBSTER
+    export (e.g. Level 1) only records a Submission for an order once it's
+    within the requested depth -- an order resting deeper that later gets
+    partially cancelled or executed (without ever crossing into view) has
+    no Submission row at all in that file, even though it was genuinely
+    resting the whole time. Empirically ~12.6% of type-2/3/4 rows in the
+    AAPL 2012-06-21 Level-1 sample reference such an id (verified against
+    the real downloaded file, not assumed). This isn't a bug to raise on
+    -- it's a real, quantifiable gap in what a shallow export can
+    reconstruct. Handling, all counted into `stats` if provided:
+      - Deletion (3) of an untracked id: already a no-op both here and in
+        OrderBook::cancel_order on an unknown id, so nothing extra needed.
+      - Partial cancellation (2) of an untracked id: dropped (can't reduce
+        an order our book was never given).
+      - Execution (4) rows against an untracked id are filtered out of
+        their group before the aggressor is synthesized (both from the
+        group's total size and from its worst-price computation) --
+        including them would make the aggressor consume *other*,
+        genuinely-tracked resting orders that the real aggressor never
+        touched, corrupting the reconstruction further rather than
+        approximating it. A group left with zero known rows emits no
+        aggressor at all.
+
+    Still raises UnsupportedLobsterEvent for cross trade (6) and trading
+    halt (7): neither has any equivalent in the current replay model, and
+    approximating either would risk a replay that looks plausible but
+    isn't provably faithful -- exactly what this project's
+    no-unmeasured-claims principle rules out.
     """
+    if stats is None:
+        stats = {}
+    stats.setdefault("hidden_executions_skipped", 0)
+    stats.setdefault("untracked_reduce_skipped", 0)
+    stats.setdefault("untracked_execution_rows_skipped", 0)
+    stats.setdefault("execution_groups", 0)
+    stats.setdefault("execution_groups_fully_untracked", 0)
+
     events = []
-    for m in messages:
+    resting_size = {}  # order_id -> current resting size, tracked as we go
+    next_aggressor_id = AGGRESSOR_ID_BASE
+    i = 0
+    n = len(messages)
+    while i < n:
+        m = messages[i]
         if m.event_type == SUBMISSION:
             events.append(("add", m.order_id, _side(m.direction), m.price, m.size))
+            resting_size[m.order_id] = m.size
+            i += 1
         elif m.event_type == DELETION:
             events.append(("cancel", m.order_id))
-        elif m.event_type in (
-            PARTIAL_CANCELLATION,
-            EXECUTION_VISIBLE,
-            EXECUTION_HIDDEN,
-            CROSS_TRADE,
-            TRADING_HALT,
-        ):
+            resting_size.pop(m.order_id, None)
+            i += 1
+        elif m.event_type == PARTIAL_CANCELLATION:
+            current = resting_size.get(m.order_id)
+            if current is None:
+                stats["untracked_reduce_skipped"] += 1
+                i += 1
+                continue
+            new_size = current - m.size
+            if new_size <= 0:
+                raise ValueError(
+                    f"partial cancellation left non-positive size ({new_size}) for "
+                    f"order_id={m.order_id} at time={m.time_seconds} -- expected a Deletion "
+                    "(type 3), not a type-2, for a full cancel"
+                )
+            events.append(("reduce", m.order_id, new_size))
+            resting_size[m.order_id] = new_size
+            i += 1
+        elif m.event_type == EXECUTION_HIDDEN:
+            stats["hidden_executions_skipped"] += 1
+            i += 1
+        elif m.event_type == EXECUTION_VISIBLE:
+            group_end = i + 1
+            while (
+                group_end < n
+                and messages[group_end].event_type == EXECUTION_VISIBLE
+                and messages[group_end].time_seconds == m.time_seconds
+                and messages[group_end].direction == m.direction
+            ):
+                group_end += 1
+            group = messages[i:group_end]
+            stats["execution_groups"] += 1
+
+            known_rows = [row for row in group if row.order_id in resting_size]
+            stats["untracked_execution_rows_skipped"] += len(group) - len(known_rows)
+
+            if known_rows:
+                aggressor_side = _side(-m.direction)
+                total_size = sum(row.size for row in known_rows)
+                # Must be at least as extreme as every touched known level
+                # so the engine's own matching walks through exactly those
+                # levels -- max price touched for a buy aggressor
+                # (sweeping asks), min for a sell aggressor (sweeping
+                # bids). Computed from the known rows' own prices, not
+                # assumed pre-sorted by row order.
+                prices = [row.price for row in known_rows]
+                aggressor_price = max(prices) if aggressor_side == "Buy" else min(prices)
+
+                events.append(
+                    ("add", next_aggressor_id, aggressor_side, aggressor_price, total_size)
+                )
+                next_aggressor_id += 1
+            else:
+                stats["execution_groups_fully_untracked"] += 1
+
+            for row in known_rows:
+                current = resting_size[row.order_id]
+                remaining = current - row.size
+                if remaining < 0:
+                    raise ValueError(
+                        f"execution over-fills order_id={row.order_id} at time={row.time_seconds} "
+                        f"(tracked size {current}, executed {row.size})"
+                    )
+                if remaining == 0:
+                    resting_size.pop(row.order_id, None)
+                else:
+                    resting_size[row.order_id] = remaining
+
+            i = group_end
+        elif m.event_type in (CROSS_TRADE, TRADING_HALT):
             raise UnsupportedLobsterEvent(
-                f"event_type={m.event_type} at order_id={m.order_id}, "
-                f"time={m.time_seconds} needs design work -- see to_replay_events' docstring"
+                f"event_type={m.event_type} at order_id={m.order_id}, time={m.time_seconds} "
+                "has no equivalent in the current replay model -- see to_replay_events' docstring"
             )
         else:
             raise ValueError(f"unknown LOBSTER event_type {m.event_type}")
