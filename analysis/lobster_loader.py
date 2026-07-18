@@ -123,7 +123,7 @@ def _side(direction):
 AGGRESSOR_ID_BASE = 1 << 61
 
 
-def to_replay_events(messages, stats=None):
+def to_replay_events(messages, stats=None, row_trace=None):
     """Converts LOBSTER messages to (kind, ...) tuples matching
     lob::sim::ReplayMessage's Add/Cancel/Reduce model
     (include/lob/sim/replay_message.hpp).
@@ -185,6 +185,16 @@ def to_replay_events(messages, stats=None):
     approximating either would risk a replay that looks plausible but
     isn't provably faithful -- exactly what this project's
     no-unmeasured-claims principle rules out.
+
+    If `row_trace` (a list) is passed, it's populated with one entry per
+    input message, in order: the index into the returned events list whose
+    resulting book state that message's row is comparable against, or None
+    if there isn't one (a skip of any kind above, or a non-last row within
+    a grouped execution -- the group produces exactly one post-group
+    snapshot, not one per swept order, so only the group's last row lines
+    up with a real post-event state). This is what lets a caller diff
+    against LOBSTER's own per-row orderbook CSV without misattributing an
+    expected, already-documented gap as a reconstruction bug.
     """
     if stats is None:
         stats = {}
@@ -193,6 +203,8 @@ def to_replay_events(messages, stats=None):
     stats.setdefault("untracked_execution_rows_skipped", 0)
     stats.setdefault("execution_groups", 0)
     stats.setdefault("execution_groups_fully_untracked", 0)
+    if row_trace is not None:
+        row_trace.clear()
 
     events = []
     resting_size = {}  # order_id -> current resting size, tracked as we go
@@ -204,15 +216,21 @@ def to_replay_events(messages, stats=None):
         if m.event_type == SUBMISSION:
             events.append(("add", m.order_id, _side(m.direction), m.price, m.size))
             resting_size[m.order_id] = m.size
+            if row_trace is not None:
+                row_trace.append(len(events) - 1)
             i += 1
         elif m.event_type == DELETION:
             events.append(("cancel", m.order_id))
             resting_size.pop(m.order_id, None)
+            if row_trace is not None:
+                row_trace.append(len(events) - 1)
             i += 1
         elif m.event_type == PARTIAL_CANCELLATION:
             current = resting_size.get(m.order_id)
             if current is None:
                 stats["untracked_reduce_skipped"] += 1
+                if row_trace is not None:
+                    row_trace.append(None)
                 i += 1
                 continue
             new_size = current - m.size
@@ -224,9 +242,13 @@ def to_replay_events(messages, stats=None):
                 )
             events.append(("reduce", m.order_id, new_size))
             resting_size[m.order_id] = new_size
+            if row_trace is not None:
+                row_trace.append(len(events) - 1)
             i += 1
         elif m.event_type == EXECUTION_HIDDEN:
             stats["hidden_executions_skipped"] += 1
+            if row_trace is not None:
+                row_trace.append(None)
             i += 1
         elif m.event_type == EXECUTION_VISIBLE:
             group_end = i + 1
@@ -259,8 +281,15 @@ def to_replay_events(messages, stats=None):
                     ("add", next_aggressor_id, aggressor_side, aggressor_price, total_size)
                 )
                 next_aggressor_id += 1
+                group_event_index = len(events) - 1
             else:
                 stats["execution_groups_fully_untracked"] += 1
+                group_event_index = None
+
+            if row_trace is not None:
+                last = len(group) - 1
+                for idx_in_group in range(len(group)):
+                    row_trace.append(group_event_index if idx_in_group == last else None)
 
             for row in known_rows:
                 current = resting_size[row.order_id]

@@ -86,6 +86,24 @@ def test_to_replay_events_full_fixture_flow():
     ], "type-4 group collapses to one synthesized aggressor; type-5 is skipped entirely"
 
 
+def test_to_replay_events_row_trace_aligns_rows_to_snapshots():
+    messages = parse_message_file(MESSAGE_FIXTURE)
+
+    row_trace = []
+    events = to_replay_events(messages, row_trace=row_trace)
+
+    assert len(row_trace) == len(messages)
+    # Rows 0-4 (submissions/reduce/deletion) are all 1:1 with an event.
+    assert row_trace[:5] == [0, 1, 2, 3, 4]
+    # Rows 5-6 are the grouped execution: only the group's last row (6)
+    # lines up with the single post-group snapshot (event index 5).
+    assert row_trace[5] is None
+    assert row_trace[6] == 5
+    assert events[row_trace[6]][0] == "add"
+    # Row 7 (hidden execution) has no snapshot at all.
+    assert row_trace[7] is None
+
+
 def test_to_replay_events_groups_only_consecutive_same_timestamp_same_direction():
     messages = [
         LobsterMessage(time_seconds=1.0, event_type=1, order_id=1, size=10, price=100, direction=-1),
@@ -122,6 +140,7 @@ def main():
     test_parse_message_file()
     test_parse_orderbook_file()
     test_to_replay_events_full_fixture_flow()
+    test_to_replay_events_row_trace_aligns_rows_to_snapshots()
     test_to_replay_events_groups_only_consecutive_same_timestamp_same_direction()
     test_to_replay_events_raises_on_events_with_no_replay_equivalent()
     print("OK")
