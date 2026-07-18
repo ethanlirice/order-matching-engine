@@ -173,6 +173,25 @@ std::optional<Quantity> OrderBook::cancel_order(OrderId id) {
   return remaining;
 }
 
+std::optional<Quantity> OrderBook::ReduceQuantity(OrderId id, Quantity new_quantity) {
+  auto it = order_index_.find(id);
+  if (it == order_index_.end()) {
+    return std::nullopt;
+  }
+
+  Order* order = it->second;
+  if (new_quantity == 0 || new_quantity >= order->quantity) {
+    return std::nullopt;
+  }
+
+  // Level's FIFO list is intrusive on the Order object itself (prev/next
+  // pointers) -- mutating quantity in place touches neither the list nor
+  // any Level/order_index_ bookkeeping, so the order's position is
+  // untouched by construction, not by a separate "don't move it" step.
+  order->quantity = new_quantity;
+  return new_quantity;
+}
+
 std::optional<AddOrderResult> OrderBook::modify_order(OrderId id, Price new_price,
                                                       Quantity new_quantity) {
   auto it = order_index_.find(id);

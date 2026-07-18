@@ -184,6 +184,71 @@ TEST(OrderBookTest, CancelOneOfTwoOrdersAtSameLevelKeepsTheOther) {
   EXPECT_TRUE(CheckInvariants(book));
 }
 
+// -- ReduceQuantity (priority-preserving partial cancel) --------------------
+
+TEST(OrderBookTest, ReduceQuantityShrinksInPlacePreservingQueuePosition) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Buy, OrderType::Limit, 100, 10));
+  book.add_order(MakeOrder(2, Side::Buy, OrderType::Limit, 100, 5));
+  book.add_order(MakeOrder(3, Side::Buy, OrderType::Limit, 100, 7));
+
+  std::optional<Quantity> result = book.ReduceQuantity(2, 2);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, 2u);
+
+  // Unlike modify_order, the reduced order keeps its original slot.
+  EXPECT_EQ(book.resting_order_ids(Side::Buy, 100), (std::vector<OrderId>{1, 2, 3}));
+  ASSERT_NE(book.debug_peek(2), nullptr);
+  EXPECT_EQ(book.debug_peek(2)->quantity, 2u);
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, ReduceQuantityThenMatchRespectsOriginalPriority) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Sell, OrderType::Limit, 100, 10));
+  book.add_order(MakeOrder(2, Side::Sell, OrderType::Limit, 100, 5));
+  book.ReduceQuantity(1, 3);
+
+  // A marketable buy for 4 must still fill order 1 first (now only 3 left,
+  // so it's fully consumed) before touching order 2 for the remaining 1 --
+  // proof this is a real priority-preserving reduction, not just a
+  // same-price-level reinsertion that happens to look ordered in a listing.
+  AddOrderResult result = book.add_order(MakeOrder(3, Side::Buy, OrderType::Limit, 100, 4));
+  ASSERT_EQ(result.trades.size(), 2u);
+  EXPECT_EQ(result.trades[0].maker_order_id, 1u);
+  EXPECT_EQ(result.trades[0].size, 3u);
+  EXPECT_EQ(result.trades[1].maker_order_id, 2u);
+  EXPECT_EQ(result.trades[1].size, 1u);
+  EXPECT_FALSE(book.contains(1));
+  ASSERT_NE(book.debug_peek(2), nullptr);
+  EXPECT_EQ(book.debug_peek(2)->quantity, 4u);
+  EXPECT_TRUE(CheckInvariants(book));
+}
+
+TEST(OrderBookTest, ReduceQuantityToZeroReturnsNullopt) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Buy, OrderType::Limit, 100, 10));
+
+  EXPECT_FALSE(book.ReduceQuantity(1, 0).has_value());
+  ASSERT_NE(book.debug_peek(1), nullptr);
+  EXPECT_EQ(book.debug_peek(1)->quantity, 10u) << "rejected, not silently reinterpreted as cancel";
+}
+
+TEST(OrderBookTest, ReduceQuantityAtOrAboveCurrentReturnsNullopt) {
+  OrderBook book;
+  book.add_order(MakeOrder(1, Side::Buy, OrderType::Limit, 100, 10));
+
+  EXPECT_FALSE(book.ReduceQuantity(1, 10).has_value());
+  EXPECT_FALSE(book.ReduceQuantity(1, 15).has_value());
+  ASSERT_NE(book.debug_peek(1), nullptr);
+  EXPECT_EQ(book.debug_peek(1)->quantity, 10u);
+}
+
+TEST(OrderBookTest, ReduceQuantityUnknownIdReturnsNullopt) {
+  OrderBook book;
+  EXPECT_FALSE(book.ReduceQuantity(999, 1).has_value());
+}
+
 // -- Modify -----------------------------------------------------------------
 
 TEST(OrderBookTest, ModifySamePriceChangesQuantityAndLosesTimePriority) {

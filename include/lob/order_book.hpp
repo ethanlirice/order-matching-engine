@@ -52,6 +52,19 @@ class OrderBook {
   // Returns nullopt if the id is unknown.
   std::optional<AddOrderResult> modify_order(OrderId id, Price new_price, Quantity new_quantity);
 
+  // In-place quantity reduction that preserves the order's FIFO position
+  // (unlike modify_order, which always re-inserts at the tail) -- the
+  // correct primitive for a venue's "partial cancellation" semantics
+  // (e.g. LOBSTER message type 2), where a resting order keeps its queue
+  // priority when it shrinks. Requires 0 < new_quantity < current
+  // quantity: new_quantity == 0 is a full cancel (use cancel_order) and
+  // new_quantity >= current is not a reduction at all -- both are
+  // rejected (nullopt) rather than silently reinterpreted, since callers
+  // that meant something else should find out, not have this API guess.
+  // Returns the new resting quantity, or nullopt if the id is unknown or
+  // new_quantity is out of the valid reduction range.
+  std::optional<Quantity> ReduceQuantity(OrderId id, Quantity new_quantity);
+
   bool best_bid(Price& out_price) const;
   bool best_ask(Price& out_price) const;
 

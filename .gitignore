@@ -10,6 +10,7 @@ SETUP_GUIDE.md
 build/
 build-tsan/
 build-fuzz/
+build-asan/
 *.o
 *.a
 *.so
@@ -22,6 +23,9 @@ __pycache__/
 data/*.csv
 data/*.bin
 data/*.parquet
+
+# --- real LOBSTER sample data (not ours to redistribute; see README) ---
+data/lobster/
 
 # --- generated plots (findings are written into README, not the images) ---
 analysis/output/
