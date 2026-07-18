@@ -37,8 +37,11 @@ void Simulator::ApplyReplayMessage(const ReplayMessage& message) {
 
     AddOrderResult result = engine_.submit_order(order);
     HandleTrades(result.trades);
-  } else {
+  } else if (message.kind == ReplayMessage::Kind::Cancel) {
     engine_.cancel_order(message.cancel_id);
+    HandleTrades({});
+  } else {
+    engine_.ReduceQuantity(message.reduce_id, message.reduce_to_quantity);
     HandleTrades({});
   }
 }

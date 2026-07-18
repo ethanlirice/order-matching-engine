@@ -25,6 +25,11 @@ class MatchingEngine {
   std::optional<Quantity> cancel_order(OrderId id);
   std::optional<AddOrderResult> modify_order(OrderId id, Price new_price, Quantity new_quantity);
 
+  // Priority-preserving partial cancel -- see OrderBook::ReduceQuantity.
+  // No trades possible (pure quantity shrink), so no trade-callback
+  // fan-out is needed here, unlike submit_order/modify_order.
+  std::optional<Quantity> ReduceQuantity(OrderId id, Quantity new_quantity);
+
   // Read-only: for test/debug inspection (e.g. the simulator's golden-file
   // tests). No strategy-facing code should depend on this -- strategies
   // only ever see a narrow BookSnapshot, never OrderBook itself.

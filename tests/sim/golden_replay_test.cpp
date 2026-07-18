@@ -10,6 +10,32 @@ namespace {
 
 using testing::MakeAddEvent;
 using testing::MakeCancelEvent;
+using testing::MakeReduceEvent;
+
+// Reduce (LOBSTER-style partial cancellation) through the full Simulator
+// path -- proves priority survives real event-queue processing, not just a
+// direct OrderBook::ReduceQuantity call (see order_book_test.cpp for that).
+TEST(GoldenReplayTest, ReduceEventPreservesPriorityThroughASubsequentMatch) {
+  Simulator simulator;
+
+  simulator.LoadEvents({
+      MakeAddEvent(100, 0, 1, Side::Sell, 105, 10),
+      MakeAddEvent(110, 1, 2, Side::Sell, 105, 5),
+      MakeReduceEvent(120, 2, 1, 3),  // order 1: 10 -> 3, keeps its slot
+      MakeAddEvent(130, 3, 3, Side::Buy, 105, 4),
+  });
+  simulator.Run();
+
+  // Order 1 (now only 3) must still be consumed before order 2.
+  ASSERT_EQ(simulator.trade_log().size(), 2u);
+  EXPECT_EQ(simulator.trade_log()[0].maker_order_id, 1u);
+  EXPECT_EQ(simulator.trade_log()[0].size, 3u);
+  EXPECT_EQ(simulator.trade_log()[1].maker_order_id, 2u);
+  EXPECT_EQ(simulator.trade_log()[1].size, 1u);
+  EXPECT_FALSE(simulator.DebugBook().contains(1));
+  ASSERT_NE(simulator.DebugBook().debug_peek(2), nullptr);
+  EXPECT_EQ(simulator.DebugBook().debug_peek(2)->quantity, 4u);
+}
 
 // Hand-constructed trace with independently hand-computed expected
 // checkpoints (NOT "run the engine once and snapshot its own output",

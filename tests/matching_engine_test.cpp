@@ -43,6 +43,16 @@ TEST(MatchingEngineTest, CancelOrderDelegatesToOrderBook) {
   EXPECT_FALSE(engine.cancel_order(1).has_value());
 }
 
+TEST(MatchingEngineTest, ReduceQuantityDelegatesToOrderBook) {
+  MatchingEngine engine;
+  engine.submit_order(MakeOrder(1, Side::Buy, OrderType::Limit, 100, 10));
+
+  std::optional<Quantity> reduced = engine.ReduceQuantity(1, 4);
+  ASSERT_TRUE(reduced.has_value());
+  EXPECT_EQ(*reduced, 4u);
+  EXPECT_FALSE(engine.ReduceQuantity(1, 0).has_value());
+}
+
 TEST(MatchingEngineTest, ModifyOrderDelegatesToOrderBookAndFiresCallback) {
   MatchingEngine engine;
   std::vector<TradeEvent> received;

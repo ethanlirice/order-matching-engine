@@ -22,6 +22,10 @@ std::optional<Quantity> MatchingEngine::cancel_order(OrderId id) {
   return book_.cancel_order(id);
 }
 
+std::optional<Quantity> MatchingEngine::ReduceQuantity(OrderId id, Quantity new_quantity) {
+  return book_.ReduceQuantity(id, new_quantity);
+}
+
 std::optional<AddOrderResult> MatchingEngine::modify_order(OrderId id, Price new_price,
                                                            Quantity new_quantity) {
   std::optional<AddOrderResult> result = book_.modify_order(id, new_price, new_quantity);

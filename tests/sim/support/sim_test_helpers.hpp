@@ -34,4 +34,18 @@ inline Event MakeCancelEvent(Timestamp t, std::uint64_t sequence, OrderId id) {
   return event;
 }
 
+inline Event MakeReduceEvent(Timestamp t, std::uint64_t sequence, OrderId id,
+                             Quantity new_quantity) {
+  Event event;
+  event.timestamp = t;
+  event.kind = EventKind::Replay;
+  event.sequence = sequence;
+  ReplayMessage message;
+  message.kind = ReplayMessage::Kind::Reduce;
+  message.reduce_id = id;
+  message.reduce_to_quantity = new_quantity;
+  event.payload = message;
+  return event;
+}
+
 }  // namespace lob::sim::testing
