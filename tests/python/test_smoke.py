@@ -57,10 +57,29 @@ def test_every_strategy_kind_runs():
         assert isinstance(result.fills, list)
 
 
+def test_replay_lobster_events_round_trips_a_resting_order():
+    event = lob.LobsterReplayEvent()
+    event.kind = lob.LobsterEventKind.Add
+    event.order_id = 1
+    event.side = lob.Side.Buy
+    event.price = 100
+    event.quantity = 10
+
+    rows = lob.replay_lobster_events([event], 2)
+
+    assert len(rows) == 1
+    top = rows[0].levels[0]
+    assert not top.bid_empty
+    assert top.bid_price == 100
+    assert top.bid_size == 10
+    assert top.ask_empty
+
+
 def main():
     test_import()
     test_trivial_run_simulation_produces_sane_nonempty_results()
     test_every_strategy_kind_runs()
+    test_replay_lobster_events_round_trips_a_resting_order()
     print("OK")
 
 

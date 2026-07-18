@@ -5,6 +5,7 @@
 #include <pybind11/stl.h>
 
 #include "lob/mm/simulation_runner.hpp"
+#include "lob/sim/lobster_replay.hpp"
 
 namespace py = pybind11;
 
@@ -95,4 +96,33 @@ PYBIND11_MODULE(lob_bindings, m) {
   m.def("run_simulation", &lob::mm::RunSimulation, py::arg("config"),
         "Run a full synthetic-data market-making simulation; returns fills, inventory/mid-price "
         "series, and the metrics suite.");
+
+  py::enum_<lob::sim::LobsterReplayEvent::Kind>(m, "LobsterEventKind")
+      .value("Add", lob::sim::LobsterReplayEvent::Kind::Add)
+      .value("Cancel", lob::sim::LobsterReplayEvent::Kind::Cancel)
+      .value("Reduce", lob::sim::LobsterReplayEvent::Kind::Reduce);
+
+  py::class_<lob::sim::LobsterReplayEvent>(m, "LobsterReplayEvent")
+      .def(py::init<>())
+      .def_readwrite("kind", &lob::sim::LobsterReplayEvent::kind)
+      .def_readwrite("order_id", &lob::sim::LobsterReplayEvent::order_id)
+      .def_readwrite("side", &lob::sim::LobsterReplayEvent::side)
+      .def_readwrite("price", &lob::sim::LobsterReplayEvent::price)
+      .def_readwrite("quantity", &lob::sim::LobsterReplayEvent::quantity);
+
+  py::class_<lob::sim::BookLevelSnapshot>(m, "BookLevelSnapshot")
+      .def_readonly("ask_price", &lob::sim::BookLevelSnapshot::ask_price)
+      .def_readonly("ask_size", &lob::sim::BookLevelSnapshot::ask_size)
+      .def_readonly("bid_price", &lob::sim::BookLevelSnapshot::bid_price)
+      .def_readonly("bid_size", &lob::sim::BookLevelSnapshot::bid_size)
+      .def_readonly("ask_empty", &lob::sim::BookLevelSnapshot::ask_empty)
+      .def_readonly("bid_empty", &lob::sim::BookLevelSnapshot::bid_empty);
+
+  py::class_<lob::sim::BookSnapshotRow>(m, "BookSnapshotRow")
+      .def_readonly("levels", &lob::sim::BookSnapshotRow::levels);
+
+  m.def("replay_lobster_events", &lob::sim::ReplayLobsterEvents, py::arg("events"),
+        py::arg("num_levels"),
+        "Replays a LOBSTER-derived event list (see analysis/lobster_loader.py) through a bare "
+        "MatchingEngine; returns one top-num_levels BookSnapshotRow per input event.");
 }
