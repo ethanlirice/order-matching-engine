@@ -12,6 +12,7 @@ add_executable(lob_tests
   sim/order_ack_test.cpp
   sim/market_data_log_test.cpp
   sim/time_utils_test.cpp
+  sim/lobster_replay_test.cpp
   mm/market_maker_test.cpp
   mm/naive_maker_test.cpp
   mm/inventory_capped_maker_test.cpp
