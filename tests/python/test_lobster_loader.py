@@ -28,6 +28,7 @@ from lobster_loader import (  # noqa: E402  (path must be set up first)
     UnsupportedLobsterEvent,
     parse_message_file,
     parse_orderbook_file,
+    parse_orderbook_line,
     to_replay_events,
 )
 
@@ -136,6 +137,52 @@ def test_to_replay_events_raises_on_events_with_no_replay_equivalent():
             pass
 
 
+def test_parse_orderbook_line_raises_on_wrong_field_count():
+    try:
+        parse_orderbook_line("100,10,90,5", num_levels=2)  # 4 fields, needs 8
+        raise AssertionError("expected ValueError for a field-count mismatch")
+    except ValueError:
+        pass
+
+
+def test_to_replay_events_raises_when_partial_cancellation_would_underflow():
+    # A type-2 row that removes >= the order's entire resting size should
+    # have been a Deletion (type 3) instead -- to_replay_events treats
+    # that as malformed input, not a silent full-cancel reinterpretation.
+    messages = [
+        LobsterMessage(time_seconds=1.0, event_type=1, order_id=1, size=5, price=100, direction=1),
+        LobsterMessage(time_seconds=2.0, event_type=2, order_id=1, size=5, price=100, direction=1),
+    ]
+    try:
+        to_replay_events(messages)
+        raise AssertionError("expected ValueError for a size-underflowing partial cancellation")
+    except ValueError:
+        pass
+
+
+def test_to_replay_events_raises_on_execution_overfill():
+    messages = [
+        LobsterMessage(time_seconds=1.0, event_type=1, order_id=1, size=5, price=100, direction=1),
+        LobsterMessage(time_seconds=2.0, event_type=4, order_id=1, size=10, price=100, direction=1),
+    ]
+    try:
+        to_replay_events(messages)
+        raise AssertionError("expected ValueError for an execution exceeding the order's tracked size")
+    except ValueError:
+        pass
+
+
+def test_to_replay_events_raises_on_unknown_event_type():
+    messages = [
+        LobsterMessage(time_seconds=1.0, event_type=99, order_id=1, size=5, price=100, direction=1),
+    ]
+    try:
+        to_replay_events(messages)
+        raise AssertionError("expected ValueError for an unrecognized LOBSTER event_type")
+    except ValueError:
+        pass
+
+
 def main():
     test_parse_message_file()
     test_parse_orderbook_file()
@@ -143,6 +190,10 @@ def main():
     test_to_replay_events_row_trace_aligns_rows_to_snapshots()
     test_to_replay_events_groups_only_consecutive_same_timestamp_same_direction()
     test_to_replay_events_raises_on_events_with_no_replay_equivalent()
+    test_parse_orderbook_line_raises_on_wrong_field_count()
+    test_to_replay_events_raises_when_partial_cancellation_would_underflow()
+    test_to_replay_events_raises_on_execution_overfill()
+    test_to_replay_events_raises_on_unknown_event_type()
     print("OK")
 
 
