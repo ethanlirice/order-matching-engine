@@ -39,7 +39,7 @@ STRATEGY_LABELS = {
 }
 
 COMMON = dict(duration=50000, arrival_rate=0.05, latency=5, gamma=0.001)
-NUM_SEEDS = 30
+NUM_SEEDS = 300
 SEEDS = list(range(1, NUM_SEEDS + 1))
 
 

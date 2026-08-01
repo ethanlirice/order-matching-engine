@@ -131,7 +131,8 @@ def run_multi_seed(strategy_name, seeds, **config_kwargs):
 def summarize(df, value_columns):
     """Collapses a per-seed DataFrame (as returned by run_multi_seed) into
     mean/std/95%-CI-half-width per column, using a normal approximation
-    (adequate here -- N=30 seeds, not claiming small-sample exactness).
+    (adequate at the seed counts this project uses -- tens to a few
+    hundred -- not claiming small-sample exactness).
     """
     n = len(df)
     summary = {"n_seeds": n}

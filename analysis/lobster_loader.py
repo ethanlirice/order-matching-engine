@@ -10,12 +10,13 @@ row per event, giving the resulting top-N levels as repeating
 
 to_replay_events converts Submission/Deletion/Partial-cancellation/
 Execution-of-a-visible-order onto lob::sim::ReplayMessage's Add/Cancel/
-Reduce model (include/lob/sim/replay_message.hpp), now that
-OrderBook::ReduceQuantity exists for priority-preserving partial cancels
-and Simulator dispatches Reduce events. Still deliberately NOT wired into
-a runnable C++ replay path here -- this module only produces the
-normalized event list; feeding it through Simulator and diffing against
-LOBSTER's own orderbook file is the next, separate step.
+Reduce model (include/lob/sim/replay_message.hpp), via
+OrderBook::ReduceQuantity for priority-preserving partial cancels and
+Simulator's Reduce dispatch. This module only produces the normalized
+event list; sim/lobster_replay.cpp feeds it through a real MatchingEngine
+and analysis/lobster_validate.py diffs the result against LOBSTER's own
+orderbook file -- see README's "Real-data (LOBSTER) validation" section
+for what that run found.
 """
 
 from dataclasses import dataclass

@@ -107,51 +107,63 @@ after the static cases all pass.
 ## Findings, in brief
 
 Full tables (PnL decomposition, inventory bounds, markout, latency sweep,
-gamma sweep) are in the README, each now a mean ± 95% CI over 30
-independent seeds rather than one representative run. Averaging across
-seeds changed some conclusions, not just tightened the numbers:
+gamma sweep) are in the README, each a mean ± 95% CI over 300 independent
+seeds (raised from an initial 30-seed pass specifically to settle two
+questions that pass left open). Averaging across seeds — and then
+increasing the seed count 10x — changed some conclusions, not just
+tightened the numbers:
 
 - **Inventory-aware strategies bound inventory tightly and consistently.**
   Inventory-capped, AS, and OFI all show narrow CIs on their max
-  |inventory| across seeds (53.6±1.8, 10.7±0.7, 11.2±1.0) — the
-  reservation-price skew (and the cap) is doing real, reliable work, not
-  just capping late in a favorable run.
-- **Naive carries real unbounded tail risk that a single seed can hide
-  entirely.** Its single-seed max |inventory| was 60, in line with
-  inventory-capped's cap; across 30 seeds its worst case was 992 — nearly
-  7x its own 30-seed mean (150.3±67.4) and over 16x inventory-capped's
-  cap. The single-seed PnL table previously showed naive as the
-  *best*-PnL strategy (742, positive); the 30-seed mean is negative
-  (-844.7) with a CI wider than the mean itself. That one favorable seed
-  was not representative — it's the clearest example in this project of
-  why single-seed findings can point the wrong direction entirely.
+  |inventory| across seeds (53.0±0.9, 10.8±0.3, 11.9±0.5 at 300 seeds) —
+  the reservation-price skew (and the cap) is doing real, reliable work,
+  not just capping late in a favorable run. Unchanged in kind from the
+  30-seed pass, just tighter.
+- **Naive carries real unbounded tail risk, and it keeps getting worse
+  with more sampling, not less.** Single-seed max |inventory| was 60; at
+  30 seeds the worst case was 992; at 300 seeds it's 4508 — every larger
+  sample has found a worse outlier than the last, with no sign of a
+  ceiling. The single-seed PnL table showed naive as the *best*-PnL
+  strategy (742, positive); by 300 seeds the mean is solidly negative
+  (-678, CI still wider than the mean). That one favorable seed was never
+  representative — it's the clearest example in this project of why
+  single-seed findings can point the wrong direction entirely.
 - **OFI's isolated adverse-selection improvement still doesn't show up,
-  now with a real seed count behind that conclusion.** OFI − AS pure
-  adverse-selection cost is +0.347 with a 95% CI half-width of 1.213 —
-  not distinguishable from zero. The single-seed pass already guessed
-  this was noise; 30 seeds confirms the guess rather than resolving it
-  either way. This is reported as an open question, not smoothed into
-  either "OFI works" or "OFI doesn't work."
-- **Gamma's inventory trend is real and monotonic** (clean, tight CIs at
-  every point); **its PnL trend is not**, at least not in the middle of
-  the swept range — gamma=0.005 and 0.01 have CIs several times wider
-  than their means, meaning a handful of seeds take large losses while
-  most don't. Only the two ends of the sweep are solid: very low gamma
-  reliably loses a lot, and gamma=0.05 is the only point close to
-  breakeven *and* tightly bounded.
+  now backed by a materially larger seed count.** OFI − AS pure
+  adverse-selection cost is +0.252 with a 95% CI half-width of 1.039 at
+  300 seeds (was +0.347 ± 1.213 at 30) — still not distinguishable from
+  zero. The CI barely tightened despite 10x the seeds, because the larger
+  sample revealed more per-fill variance than the smaller one had
+  captured, not less. This is now a reasonably solid negative result, not
+  an under-powered one.
+- **The gamma sweep's PnL noise at 0.005/0.01 wasn't sampling variance
+  that would average out — it was a real, previously invisible tail-risk
+  failure mode.** At 300 seeds, gamma ≥ 0.005 produces occasional
+  catastrophic losses (one seed at gamma=0.05 loses $3.46M from 13
+  fills), traced to the reservation-price skew becoming self-reinforcing
+  at this uncalibrated a gamma when synthetic liquidity is thin enough
+  that there's no real opposing quote for the existing crossing-clamp to
+  clamp against. Re-running the same 300 seeds at the calibrated
+  gamma=0.001 shows zero such outliers (worst case -25,702), confirming
+  this is specific to sweeping gamma outside its calibrated range, not a
+  standing correctness bug. The 30-seed pass's read of gamma=0.05 as "the
+  only point close to breakeven and tightly bounded" was simply wrong —
+  an artifact of not sampling enough seeds to hit the failure mode.
 
 ## Honest limitations
 
-- Findings above are now averaged over **30 seeds per configuration**
-  (`analysis/generate_plots.py`, `NUM_SEEDS = 30`) rather than one — this
-  resolved some open questions (gamma's monotonic inventory trend) and
-  left others genuinely open (OFI's adverse-selection edge, PnL in the
-  middle of the gamma sweep) rather than manufacturing false confidence.
-  30 seeds is still a normal-approximation CI on a fairly small sample,
-  not a rigorous hypothesis test — treat "not distinguishable from zero"
-  as "no evidence found," not "proven equal." Sharpe is unannualized (no
-  real calendar mapping for virtual ticks exists) and is reported as one
-  more number among several, not a single ranking metric.
+- Findings above are averaged over **300 seeds per configuration**
+  (`analysis/generate_plots.py`, `NUM_SEEDS = 300`), raised from an
+  initial 30-seed pass. Some of what looked like "just sampling noise" at
+  30 seeds turned out, at 300, to be a real tail-risk phenomenon (the
+  gamma-sweep finding above) rather than something more data would have
+  smoothed out — a reminder that "the CI is wide" and "this is noise that
+  will average away" are not the same claim. Even at 300, this is a
+  normal-approximation CI on a finite sample, not a rigorous hypothesis
+  test — treat "not distinguishable from zero" as "no evidence found,"
+  not "proven equal." Sharpe is unannualized (no real calendar mapping
+  for virtual ticks exists) and is reported as one more number among
+  several, not a single ranking metric.
 - **Synthetic order flow for the market-making study itself** (M5's
   findings above are all synthetic-generator runs). Real-data replay was
   separately attempted against a real LOBSTER sample day (AAPL,
