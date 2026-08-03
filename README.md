@@ -128,40 +128,56 @@ Four strategies, each adding one mechanic on top of the last:
 Every number below is a mean over 300 seeded runs, ± 95% CI — not a
 single lucky (or unlucky) run.
 
+**All four lose money except inventory-capped.** That's not a bug either
+— I checked. AS/OFI's `sigma` (their assumed volatility) was a placeholder
+default that had never actually been checked against this book's real
+volatility, so I ran a grid search over gamma/sigma/kappa (150+
+combinations) to see if better calibration would fix it. It helped —
+AS's loss dropped from -1058 to -655, OFI's from -945 to -539 — but
+every configuration that trades a meaningful amount still loses money.
+The ones that "break even" just stop trading almost entirely. That's a
+real answer, not a bug: this synthetic order flow has no informational
+edge for a market maker to capture — no informed/uninformed split, no
+toxicity signal, just symmetric noise — so spread capture alone can't
+beat adverse selection here, at any calibration. The numbers below
+reflect the corrected calibration; the search itself is in `RESULTS.md`.
+
 <img src="docs/img/pnl_decomposition.png" width="560" alt="PnL decomposition by strategy">
 <img src="docs/img/inventory_boundedness.png" width="560" alt="Inventory over time by strategy">
 
 What the data says:
 
-- **Naive is a coin flip, not a strategy.** Its mean PnL is negative
-  with a CI wider than the mean itself. Its inventory isn't just
-  unbounded — the worst seed found so far is 4508 units, and every time
-  the seed count went up, the worst case got worse, not better.
+- **Naive is a coin flip, not a strategy.** Mean PnL is negative with a
+  CI wider than the mean itself. Its inventory isn't just unbounded —
+  the worst seed found so far is 4508 units, and every time the seed
+  count went up, the worst case got worse, not better.
 - **Inventory-capped, AS, and OFI all keep inventory in a tight band**
-  (roughly ±10-55 units, consistently). The reservation-price skew (and
-  the cap) actually does its job.
+  (roughly ±9-55 units, consistently). The reservation-price skew (and
+  the cap) actually does its job, even though it doesn't add up to
+  positive PnL.
 - **OFI's adverse-selection edge over plain AS doesn't show up.** The
-  difference is +0.25 ± 1.04 per fill — not distinguishable from zero,
-  even at 300 seeds. Might be real and just too small to see here, might
-  not be real at all. Can't tell from this experiment.
-- **Higher latency loses less money**, monotonically, because the
-  strategy just trades less into adverse selection. Converges toward
+  difference is -0.18 ± 2.37 per fill — not distinguishable from zero.
+  Might be real and too small to see here at these fill counts, might
+  not be real at all.
+- **Higher latency loses less money**, roughly monotonically, because
+  the strategy just trades less into adverse selection. Converges toward
   breakeven, not into profit.
 
 <img src="docs/img/gamma_sweep.png" width="700" alt="Gamma sweep showing PnL blowing up at high gamma">
 
-**The gamma sweep found a real bug.** At 30 seeds, gamma=0.05 looked
-like the safest setting — tight variance, close to breakeven. At 300
-seeds, one seed loses **$3.46M** from 13 fills. Traced it: at a gamma
-this far outside its calibrated range, the reservation-price skew from a
-handful of inventory units pushes the quote thousands of ticks from the
-real mid. Liquidity is thin enough at that gamma that there's often no
-real opposing quote for the market-crossing clamp to check against, so
-the bad quote fills, becomes the new reference price, and the next quote
-compounds on it. Re-ran the same 300 seeds at the actual calibrated
-gamma (0.001) as a control — zero blowups, worst case -25,702. So it's a
-calibration-range issue, not a standing bug in the matching engine. Full
-trace is in `RESULTS.md`.
+**The gamma sweep also found a real bug**, separate from the calibration
+question above. Push gamma too far past its sweet spot (here, ~0.008)
+and one seed out of 300 loses **$2.1M** from 13 fills — same specific
+seed both before and after the sigma fix, just less catastrophic once
+sigma was corrected ($3.46M → $2.1M). Traced it: at high enough gamma,
+the reservation-price skew from a handful of inventory units pushes the
+quote thousands of ticks from the real mid. Liquidity is thin enough at
+that gamma that there's often no real opposing quote for the
+market-crossing clamp to check against, so the bad quote fills, becomes
+the new reference price, and the next quote compounds on it. This is a
+real property of the AS quoting formula under thin liquidity, not
+something the calibration fix was ever going to remove. Full trace in
+`RESULTS.md`.
 
 ### Three bugs found by just running it
 

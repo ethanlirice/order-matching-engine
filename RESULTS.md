@@ -108,17 +108,33 @@ after the static cases all pass.
 
 Full tables (PnL decomposition, inventory bounds, markout, latency sweep,
 gamma sweep) are in the README, each a mean ± 95% CI over 300 independent
-seeds (raised from an initial 30-seed pass specifically to settle two
-questions that pass left open). Averaging across seeds — and then
-increasing the seed count 10x — changed some conclusions, not just
-tightened the numbers:
+seeds. Leading with the most recent finding, then the rest in the order
+they were found:
 
+- **AS/OFI were quoting with an uncalibrated volatility assumption, and
+  fixing it still doesn't make them profitable.** `sigma` (AS/OFI's
+  assumed mid-price volatility) had been left at its default of 1.0 —
+  never checked against what the book actually does. Measured it: the
+  synthetic generator's realized per-event mid-price move has a std of
+  about 0.59 ticks, nowhere close to what sigma=1.0 implies. Ran a grid
+  search over gamma × sigma × kappa (150+ combinations at 50 seeds each,
+  top candidates confirmed at 300) to find a properly calibrated
+  configuration. Best found: gamma=0.008, sigma=0.45, kappa=0.4 — AS's
+  mean loss shrank from -1058 to -655, OFI's from -945 to -539, both
+  meaningfully better. Still losses, though, and every configuration in
+  the entire search that traded a meaningful amount (more than a
+  handful of fills) lost money; the configurations that came closest to
+  breakeven did it by barely trading at all. That's the honest ceiling
+  here: this synthetic order flow has no informational edge built into
+  it — no informed/uninformed split, no toxicity signal, just symmetric
+  noise — so there's nothing for spread capture to win against beyond
+  adverse selection, at any calibration. All numbers below use the
+  corrected calibration.
 - **Inventory-aware strategies bound inventory tightly and consistently.**
   Inventory-capped, AS, and OFI all show narrow CIs on their max
-  |inventory| across seeds (53.0±0.9, 10.8±0.3, 11.9±0.5 at 300 seeds) —
+  |inventory| across seeds (53.0±0.9, 8.8±0.3, 8.9±0.4 at 300 seeds) —
   the reservation-price skew (and the cap) is doing real, reliable work,
-  not just capping late in a favorable run. Unchanged in kind from the
-  30-seed pass, just tighter.
+  even though it doesn't translate into positive PnL.
 - **Naive carries real unbounded tail risk, and it keeps getting worse
   with more sampling, not less.** Single-seed max |inventory| was 60; at
   30 seeds the worst case was 992; at 300 seeds it's 4508 — every larger
@@ -128,27 +144,25 @@ tightened the numbers:
   (-678, CI still wider than the mean). That one favorable seed was never
   representative — it's the clearest example in this project of why
   single-seed findings can point the wrong direction entirely.
-- **OFI's isolated adverse-selection improvement still doesn't show up,
-  now backed by a materially larger seed count.** OFI − AS pure
-  adverse-selection cost is +0.252 with a 95% CI half-width of 1.039 at
-  300 seeds (was +0.347 ± 1.213 at 30) — still not distinguishable from
-  zero. The CI barely tightened despite 10x the seeds, because the larger
-  sample revealed more per-fill variance than the smaller one had
-  captured, not less. This is now a reasonably solid negative result, not
-  an under-powered one.
-- **The gamma sweep's PnL noise at 0.005/0.01 wasn't sampling variance
-  that would average out — it was a real, previously invisible tail-risk
-  failure mode.** At 300 seeds, gamma ≥ 0.005 produces occasional
-  catastrophic losses (one seed at gamma=0.05 loses $3.46M from 13
-  fills), traced to the reservation-price skew becoming self-reinforcing
-  at this uncalibrated a gamma when synthetic liquidity is thin enough
-  that there's no real opposing quote for the existing crossing-clamp to
-  clamp against. Re-running the same 300 seeds at the calibrated
-  gamma=0.001 shows zero such outliers (worst case -25,702), confirming
-  this is specific to sweeping gamma outside its calibrated range, not a
-  standing correctness bug. The 30-seed pass's read of gamma=0.05 as "the
-  only point close to breakeven and tightly bounded" was simply wrong —
-  an artifact of not sampling enough seeds to hit the failure mode.
+- **OFI's isolated adverse-selection improvement still doesn't show up.**
+  OFI − AS pure adverse-selection cost is -0.18 with a 95% CI half-width
+  of 2.37 at 300 seeds (post-calibration; fewer fills at the corrected
+  gamma widened this CI versus the pre-calibration number) — not
+  distinguishable from zero either direction.
+- **The gamma sweep found a real bug, independent of the calibration
+  question above.** Push gamma too far past its sweet spot and PnL
+  variance blows up: at gamma=0.15 (post-calibration), one seed out of
+  300 loses $2.1M from 13 fills — the same seed (221) that blew up
+  pre-calibration too, just for less (was $3.46M at the old, uncalibrated
+  sigma). Traced it: at high enough gamma, the reservation-price skew
+  from a handful of inventory units pushes the quote thousands of ticks
+  from the real mid; liquidity is thin enough at that gamma that there's
+  often no real opposing quote for the existing crossing-clamp to check
+  against, so the bad quote fills, becomes the new reference price, and
+  the next quote compounds on it. This is a structural property of the
+  AS quoting formula under thin liquidity — the sigma fix reduced its
+  severity but didn't and wasn't going to remove it, since it isn't a
+  calibration problem.
 
 ## Honest limitations
 

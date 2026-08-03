@@ -1,7 +1,8 @@
 """Generates the four required plots (PROJECT_SPEC.md §8/§14) plus the
 gamma sweep, and prints a findings summary (the numbers that get written
-into README.md by hand -- plot images themselves aren't committed, per
-CLAUDE.md's convention of not committing generated binaries).
+into README.md/RESULTS.md by hand). Full output goes to analysis/output/
+(gitignored, regenerated per run); a curated subset gets copied to
+docs/img/ and committed, since the README embeds a few of them directly.
 
 Every summary statistic (PnL decomposition, adverse-selection markout,
 PnL-vs-latency, gamma sweep) is aggregated over NUM_SEEDS independent
@@ -38,7 +39,21 @@ STRATEGY_LABELS = {
     "ofi": "OFI",
 }
 
-COMMON = dict(duration=50000, arrival_rate=0.05, latency=5, gamma=0.001)
+# gamma/sigma/kappa are AS/OFI's own calibration, not arbitrary defaults.
+# sigma=1.0 (the AvellanedaStoikovConfig default) was never actually
+# checked against this book's real volatility: the synthetic generator's
+# realized per-event mid-price move has std ~0.59 ticks, nowhere near
+# what sigma=1.0 assumes -- an uncalibrated sigma this far off distorts
+# variance_term = gamma*sigma^2*tau (quadratic in sigma) regardless of
+# how gamma is tuned. A grid search over gamma x sigma x kappa (150+
+# combinations, 50 seeds each, then confirmed at 300 seeds on the best
+# candidates) found gamma=0.008/sigma=0.45/kappa=0.4 as the best
+# meaningfully-trading configuration (>15 fills/session) -- still a net
+# loss on average, but the least-bad one found, and the honest result:
+# every configuration that trades a meaningful amount loses money here,
+# because this synthetic flow has no informational edge for a market
+# maker to capture against (see README's Market-making study section).
+COMMON = dict(duration=50000, arrival_rate=0.05, latency=5, gamma=0.008, sigma=0.45, kappa=0.4)
 NUM_SEEDS = 300
 SEEDS = list(range(1, NUM_SEEDS + 1))
 
@@ -227,13 +242,13 @@ def plot_pnl_vs_latency():
 
 def gamma_sweep():
     print(f"\n=== Gamma sweep (Avellaneda-Stoikov), {NUM_SEEDS} seeds per point ===")
-    # AS/OFI's horizon is the full session duration (COMMON["duration"]),
-    # so variance_term = gamma*sigma^2*tau is huge near the start of a long
-    # session unless gamma is scaled down accordingly -- see the README's
-    # "Calibrating gamma to session length" note. This range is centered on
-    # the gamma found (empirically) to produce a comparable fill count to
-    # the other strategies at COMMON["duration"].
-    gammas = [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05]
+    # Centered on COMMON's calibrated gamma=0.008 (see COMMON's comment).
+    # The catastrophic tail risk at high gamma (see README) isn't specific
+    # to the old sigma=1.0 calibration -- it reappears at proportionally
+    # higher gamma here too (confirmed up to gamma=0.4 losing >$350K in
+    # the worst of 100 seeds), so this range still needs to reach past the
+    # calibrated point to show it.
+    gammas = [0.001, 0.003, 0.008, 0.02, 0.05, 0.15]
     rows = []
     for gamma in gammas:
         cfg = dict(COMMON)
