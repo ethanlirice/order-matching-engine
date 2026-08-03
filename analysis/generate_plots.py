@@ -74,16 +74,23 @@ def plot_pnl_decomposition():
         ].to_string(index=False)
     )
 
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    # Grouped (not stacked) bars: spread_pnl and inventory_pnl aren't
+    # both positive, so a stacked bar (bottom=spread_pnl) can put
+    # inventory_pnl's bar entirely underneath and behind spread_pnl's,
+    # hiding it completely whenever |inventory_pnl| > spread_pnl (true
+    # for 3 of these 4 strategies). Three bars per strategy side by side
+    # avoids that ambiguity outright.
+    fig, ax = plt.subplots(figsize=(8, 4.5))
     x = np.arange(len(df))
-    ax.bar(x, df["spread_pnl_mean"], yerr=df["spread_pnl_ci95"], capsize=4, label="Spread PnL")
+    width = 0.25
     ax.bar(
-        x,
-        df["inventory_pnl_mean"],
-        bottom=df["spread_pnl_mean"],
-        yerr=df["inventory_pnl_ci95"],
-        capsize=4,
-        label="Inventory PnL",
+        x - width, df["spread_pnl_mean"], width, yerr=df["spread_pnl_ci95"], capsize=3, label="Spread PnL"
+    )
+    ax.bar(
+        x, df["inventory_pnl_mean"], width, yerr=df["inventory_pnl_ci95"], capsize=3, label="Inventory PnL"
+    )
+    ax.bar(
+        x + width, df["total_pnl_mean"], width, yerr=df["total_pnl_ci95"], capsize=3, label="Total PnL"
     )
     ax.set_xticks(x)
     ax.set_xticklabels(df["strategy"], rotation=15)
