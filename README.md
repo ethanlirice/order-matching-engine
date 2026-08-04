@@ -1,8 +1,23 @@
 # Order Matching Engine
 
+[![CI](https://github.com/ethanlirice/order-matching-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/ethanlirice/order-matching-engine/actions/workflows/ci.yml)
+
 A low-latency limit order book matching engine in C++, wrapped in an
 event-driven simulator, built to run market-making strategies against
 (naive, inventory-capped, Avellaneda-Stoikov, order-flow-imbalance).
+
+- Matching engine correctness backed by a libFuzzer harness and
+  ASan/UBSan/TSan, not just unit tests — see [Testing](#testing).
+- 41ns p50 add/cancel; every optimization has a before/after number — see
+  [Performance](#performance).
+- Ran a 150+ combination parameter search on the market-making
+  strategies, fixed a real volatility-calibration bug, and found a
+  separate $2.1M tail-risk bug along the way — see
+  [Market-making study](#market-making-study).
+- Validated the simulator against a real day of exchange data (LOBSTER),
+  found a genuine data-completeness limit, and wrote up why instead of
+  papering over it — see
+  [Real-data validation](#real-data-validation-lobster).
 
 All planned work (M0–M6) is done: correct matching engine, memory pool +
 benchmark suite, event-driven simulator with a queue-position fill model,
